@@ -182,52 +182,59 @@ function populated(): Record<string, unknown> {
         },
       ],
     },
-    'work:listForAgent': [
-      item('w-plan', { state: 'plan-pending', plan, planPendingAt: 1 }),
-      item('w-held', {
-        state: 'actions-pending',
-        plan,
-        pendingRunId: 'run-1',
-        output: { draft: 'd', notes: '', actions: [dm] },
-        actionVerdicts: [{ disposition: 'held', reason: 'system-of-record mutation held' }],
-      }),
-      item('w-unknown', {
-        state: 'failed',
-        plan,
-        skipReason: 'a write may have landed',
-        output: {
-          draft: 'd',
-          notes: '',
-          actions: [dm],
-          applied: [
-            {
-              tool: 'http.request',
-              ok: false,
-              outcomeUnknown: true,
-              reason: 'socket closed after the request',
-              idempotencyKey: 'w-unknown:run:0',
-            },
-          ],
-        },
-      }),
-      item('w-question', {
-        state: 'failed',
-        plan,
-        skipReason: `stopped: ${openQuestionStopReason({ question, steps: [2] })}`,
-        output: {
-          draft: '',
-          notes: '',
-          actions: [],
-          applied: [],
-          openQuestion: { question, steps: [2] },
-        },
-      }),
-      item('w-skipped', {
-        state: 'skipped',
-        verdict: { decision: 'skip', reason: 'already-claimed: state=executing' },
-      }),
-      item('w-done', { state: 'completed', plan, output: { draft: 'd', notes: '', actions: [] } }),
-    ],
+    'work:listForAgent': {
+      items: [
+        item('w-plan', { state: 'plan-pending', plan, planPendingAt: 1 }),
+        item('w-held', {
+          state: 'actions-pending',
+          plan,
+          pendingRunId: 'run-1',
+          output: { draft: 'd', notes: '', actions: [dm] },
+          actionVerdicts: [{ disposition: 'held', reason: 'system-of-record mutation held' }],
+        }),
+        item('w-unknown', {
+          state: 'failed',
+          plan,
+          skipReason: 'a write may have landed',
+          output: {
+            draft: 'd',
+            notes: '',
+            actions: [dm],
+            applied: [
+              {
+                tool: 'http.request',
+                ok: false,
+                outcomeUnknown: true,
+                reason: 'socket closed after the request',
+                idempotencyKey: 'w-unknown:run:0',
+              },
+            ],
+          },
+        }),
+        item('w-question', {
+          state: 'failed',
+          plan,
+          skipReason: `stopped: ${openQuestionStopReason({ question, steps: [2] })}`,
+          output: {
+            draft: '',
+            notes: '',
+            actions: [],
+            applied: [],
+            openQuestion: { question, steps: [2] },
+          },
+        }),
+        item('w-skipped', {
+          state: 'skipped',
+          verdict: { decision: 'skip', reason: 'already-claimed: state=executing' },
+        }),
+        item('w-done', {
+          state: 'completed',
+          plan,
+          output: { draft: 'd', notes: '', actions: [] },
+        }),
+      ],
+      cut: false,
+    },
     'managerQuestions:openForAgent': [],
     // A plan's conflict question beside it, and a reorientation card holding that plan (16-O).
     'managerQuestions:conflictsForAgent': [

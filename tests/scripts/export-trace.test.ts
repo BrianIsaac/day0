@@ -165,6 +165,10 @@ describe('exporting the owner export to a file (wave 16, 16-F)', (): void => {
           setAside: [],
           moreAgents: null,
           next: { section: OWNER_SECTIONS[0], cursor: null },
+          // The ids the head counts first (wave 18, F16): the one source the pages answer.
+          rowIds: Object.fromEntries(
+            OWNER_SECTIONS.map((section) => [section, section === 'docSources' ? [['s1']] : []]),
+          ),
         };
       }
       if (name === 'exportActions:exportOwnerPage') {
@@ -219,6 +223,7 @@ describe('exporting the owner export to a file (wave 16, 16-F)', (): void => {
           setAside: [],
           moreAgents: null,
           next: { section: OWNER_SECTIONS[0], cursor: null },
+          rowIds: Object.fromEntries(OWNER_SECTIONS.map((section) => [section, []])),
         };
       }
       if (name === 'exportActions:exportOwnerPage') {

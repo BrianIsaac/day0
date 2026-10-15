@@ -7,6 +7,7 @@ import { api } from '@convex/_generated/api';
 import type { Id } from '@convex/_generated/dataModel';
 import { MOCK_OFFICE_DOCUMENTATION } from '@/surfaces/mock-office';
 import { relationsNotShownWords } from '@/docs/relation-words';
+import { Button } from '../../../components/Button';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
 import { LinkSourceForm } from '../../../documentation/LinkSourceForm';
@@ -20,8 +21,11 @@ import { PageTable } from './PageTable';
 import { RelationAnswered, type AnsweredRelation } from './RelationAnswered';
 import { RelationCard, type RelationCardRow, type RelationCardsRead } from './RelationCard';
 
-/** The most confirmed conflicts the tab draws: as many as one read of them gives (`RELATION_CARDS_READ`). */
-const CONFLICT_CARDS_DRAWN = 20;
+/** The most cards of a kind one read draws (`docRelations.RELATION_CARDS_READ`). */
+const RELATION_CARDS_READ = 20;
+
+/** The most confirmed conflicts the tab draws: as many as one read of them gives. */
+const CONFLICT_CARDS_DRAWN = RELATION_CARDS_READ;
 
 /**
  * The most later reads the tab makes of the confirmed conflicts. Each passes over about three
@@ -67,12 +71,20 @@ function useRelationCards(first: RelationCardsRead | undefined): RelationCardRow
   const later: Record<string, RelationCardsRead | undefined | Error> = useQueries(queries);
   const cards = [...(first?.cards ?? [])];
   let next = from;
-  for (const before of current.cursors) {
+  for (const [index, before] of current.cursors.entries()) {
     const read = later[String(before)];
     // A read still loading, or one that failed, ends the chain here; the cards before it stand.
     if (read === undefined || read instanceof Error) return cards;
     cards.push(...read.cards);
     next = read.next;
+    // A read whose cards changed now stops elsewhere (its `next` is its last card drawn, 18-C's
+    // C-H): the reads after it went on from where it used to stop, and would repeat or drop a
+    // card, so they go, and the chain goes on from its new `next` (18-C's F3).
+    const after = current.cursors[index + 1];
+    if (after !== undefined && after !== next) {
+      setReads({ ...current, cursors: current.cursors.slice(0, index + 1) });
+      return cards;
+    }
   }
   const conflicts = cards.filter((card) => card.status === 'confirmed').length;
   if (
@@ -84,6 +96,90 @@ function useRelationCards(first: RelationCardsRead | undefined): RelationCardRow
     setReads({ ...current, cursors: [...current.cursors, next] });
   }
   return cards;
+}
+
+/** The proposals the tab draws, read on by the manager's press, and what to offer after them. */
+interface ProposalCards {
+  /** Every card drawn so far, the first read's first, each once. */
+  readonly cards: RelationCardRow[];
+  /** The line under the proposals, said of the last read: how many are not shown. */
+  readonly notShown: string | undefined;
+  /** How many the next press draws at most (0: more stand, how many is not known); none to offer. */
+  readonly more: number | undefined;
+  /** Whether the read a press asked for is still loading. */
+  readonly loading: boolean;
+  /** Whether the read a press asked for failed: the press reads it again. */
+  readonly failed: boolean;
+  /** Read the next proposals, from where the last read stopped. */
+  readonly showMore: () => void;
+}
+
+/**
+ * The proposals past the first read's twenty, read on only when the manager presses "Show {n}
+ * more" (D-10's read-more, under 17-PT's line): each press reads the next proposals from where the
+ * last read stopped (`proposalsBefore`). The reads are kept as the cards are answered, so a card a
+ * later read drew stays drawn; a card two reads both draw (the first read moves on as its cards
+ * are answered) is drawn once.
+ *
+ * @param first - The first read, or undefined while it loads or in the hosted office.
+ * @param cards - The cards drawn so far, the first read's and the confirmed conflicts' later reads.
+ */
+function useProposalCards(
+  first: RelationCardsRead | undefined,
+  cards: readonly RelationCardRow[],
+): ProposalCards {
+  const [cursors, setCursors] = useState<readonly number[]>([]);
+  // Each try again subscribes afresh: a failed read keeps its error under its old key.
+  const [attempt, setAttempt] = useState(0);
+  const keyOf = (before: number): string => `proposals-${before}-${attempt}`;
+  const queries = useMemo(
+    () =>
+      Object.fromEntries(
+        cursors.map((before) => [
+          `proposals-${before}-${attempt}`,
+          { query: api.docRelations.listOpen, args: { proposalsBefore: before } },
+        ]),
+      ),
+    [cursors, attempt],
+  );
+  const later: Record<string, RelationCardsRead | undefined | Error> = useQueries(queries);
+  const drawn = [...cards];
+  const ids = new Set(drawn.map((card) => card._id));
+  let last = first;
+  let loading = false;
+  let failed = false;
+  for (const before of cursors) {
+    const read = later[keyOf(before)];
+    // A read still loading, or one that failed, ends the chain here; the cards before it stand.
+    if (read === undefined || read instanceof Error) {
+      loading = read === undefined;
+      failed = read instanceof Error;
+      break;
+    }
+    for (const card of read.cards) {
+      if (!ids.has(card._id)) {
+        ids.add(card._id);
+        drawn.push(card);
+      }
+    }
+    last = read;
+  }
+  const proposals = drawn.filter((card) => card.status === 'proposed').length;
+  const next = last?.proposalsNext ?? null;
+  return {
+    cards: drawn,
+    notShown: last === undefined ? undefined : relationsNotShownWords(proposals, last.notShown),
+    more:
+      last === undefined || next === null
+        ? undefined
+        : Math.min(last.notShown.proposals, RELATION_CARDS_READ),
+    loading,
+    failed,
+    showMore: () => {
+      if (failed) setAttempt(attempt + 1);
+      else if (next !== null && !cursors.includes(next)) setCursors([...cursors, next]);
+    },
+  };
 }
 
 /**
@@ -104,15 +200,16 @@ export function DocumentationView() {
   const zone = useAgentZone();
   const sources = useQuery(api.docSources.listMine, surfaceMode === 'real' ? {} : 'skip');
   const firstRead = useQuery(api.docRelations.listOpen, surfaceMode === 'real' ? {} : 'skip');
-  const relations = useRelationCards(firstRead);
-  // The proposals the first read left out, said under the ones it drew (W17-R9, D-10 (a)).
-  const notShown =
-    firstRead === undefined
-      ? undefined
-      : relationsNotShownWords(
-          firstRead.cards.filter((card) => card.status === 'proposed').length,
-          firstRead.notShown,
-        );
+  // The proposals the reads left out, said under the ones drawn (W17-R9, D-10 (a)), with the
+  // press that reads on (D-10's read-more).
+  const {
+    cards: relations,
+    notShown,
+    more,
+    loading,
+    failed,
+    showMore,
+  } = useProposalCards(firstRead, useRelationCards(firstRead));
   const [picked, setPicked] = useState<Id<'docSources'> | undefined>(undefined);
   const [answered, setAnswered] = useState<AnsweredRelation | null>(null);
   const excluded = useMemo(
@@ -199,6 +296,20 @@ export function DocumentationView() {
       )}
       {notShown !== undefined ? (
         <p className="text-sm text-[var(--color-muted)]">{notShown}</p>
+      ) : null}
+      {failed ? (
+        <p className="text-sm text-[var(--color-muted)]">The next relations could not be read.</p>
+      ) : null}
+      {more !== undefined || failed ? (
+        <Button size="small" className="justify-self-start" disabled={loading} onClick={showMore}>
+          {loading
+            ? 'Loading…'
+            : failed
+              ? 'Try again'
+              : more === 0
+                ? 'Show more'
+                : `Show ${more} more`}
+        </Button>
       ) : null}
       {shown ? <PageTable key={shown._id} source={shown} zone={zone} /> : null}
       <Card title="Link a location">

@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   approvedResultWords,
+  askedAgainWords,
+  byHandChangesWords,
+  joinedWithoutProposalWords,
   closedByHandSummary,
   decidedByHandSummary,
   closingHeldReason,
   conflictChoiceWords,
   conflictNoticeText,
+  conflictReturnedNoticeText,
   conflictQuestionText,
   conflictNoticeReplyLine,
   conflictReplyLine,
@@ -15,6 +19,8 @@ import {
   failedProposalWords,
   deferredWords,
   heldWords,
+  notClosedOf,
+  notClosedWords,
   pendingWords,
   proposalFingerprint,
   sentenceOf,
@@ -134,8 +140,12 @@ describe('a judgement that failed, and an Approve of what the manager was shown 
     expect(unproposedWords('Mira', {})).toBe(
       'Mira had proposed nothing when the card was decided.',
     );
+    // A provider's words stored before 0.22.0 are not said (W17-R8): the kind's sentence is.
     expect(unproposedWords('Mira', { failedAt: 1, failure: 'Not Found' })).toBe(
-      'Mira could not work out a proposal (Not Found).',
+      'Mira could not work out a proposal for this change.',
+    );
+    expect(unproposedWords('Mira', { failedAt: 1, failure: 'timeout' })).toBe(
+      'Mira could not work out a proposal: the model did not answer in time.',
     );
     expect(unproposedWords('Mira', { failedAt: 1, failure: PROPOSAL_DID_NOT_FINISH })).toBe(
       'Mira did not finish working out a proposal.',
@@ -145,8 +155,8 @@ describe('a judgement that failed, and an Approve of what the manager was shown 
   it('names the ways on from a failed judgement, Discuss first, with its reason or that it did not finish', (): void => {
     const ways =
       'Nothing changes unless you act: talk it through with Mira, dismiss the card, or amend the charter yourself.';
-    expect(failedProposalWords('Mira', 'timed out.')).toBe(
-      `Mira could not work out a proposal (timed out). ${ways}`,
+    expect(failedProposalWords('Mira', 'timeout')).toBe(
+      `Mira could not work out a proposal: the model did not answer in time. ${ways}`,
     );
     expect(failedProposalWords('Mira', PROPOSAL_DID_NOT_FINISH)).toBe(
       `Mira did not finish working out a proposal. ${ways}`,
@@ -188,6 +198,18 @@ describe('a card decided on another employee’s card, and one closed at a hando
     expect(decidedElsewhereOf(approvedResultWords.dismissed)).toBeUndefined();
     expect(decidedElsewhereOf(approvedResultWords.handedOver)).toBeUndefined();
     expect(decidedElsewhereOf(undefined)).toBeUndefined();
+  });
+
+  it('stores whose card decided a sibling that could not be closed, and reads it back for its line (W17-R7)', (): void => {
+    const stored = approvedResultWords.notClosed('Priya');
+    expect(stored).toBe('not closed: decided on Priya’s card');
+    expect(notClosedOf(stored)).toBe('Priya');
+    expect(notClosedWords('Priya')).toBe(
+      'Decided on Priya’s card, but this card could not be closed: dismiss it.',
+    );
+    // Neither reads the other's outcome.
+    expect(notClosedOf(approvedResultWords.decidedElsewhere('Priya', 'x'))).toBeUndefined();
+    expect(decidedElsewhereOf(stored)).toBeUndefined();
   });
 
   it('says who opened a by-hand card a handover closed, and none of what they typed (D-5’s remainder)', (): void => {
@@ -326,6 +348,19 @@ describe('the question as the thread of a delivered request asks it (17-C; secti
     );
   });
 
+  it('says a page is current again, not that the manager confirmed, where its return asks again (W17-R13)', (): void => {
+    const two = [
+      { title: 'Finance escalation', source: 'Finance wiki' },
+      { title: 'Pipeline runbook', source: 'Handbook' },
+    ] as const;
+    expect(conflictReturnedNoticeText('Priya', 'Thresholds', two, 0, ['Slack'])).toBe(
+      '“Finance escalation” is current again, and it disagrees with “Pipeline runbook” under “Thresholds”: A, Finance escalation (Finance wiki), and B, Pipeline runbook (Handbook). Which is right? Priya holds its writes to Slack until you answer.',
+    );
+    expect(conflictReturnedNoticeText('Priya', 'Comment length', pages, 1)).toMatch(
+      /^“Close comment limits” is current again, and it disagrees with “Close comment limits” under “Comment length”: A, .*Priya holds the steps that may rely on this until you answer\.$/,
+    );
+  });
+
   it('shows how to answer a numbered question, and a lone one without its number', (): void => {
     expect(conflictReplyLine('ab3xyz')).toBe(
       'Answer with “answer ab3xyz A”, “answer ab3xyz B” or “answer ab3xyz both”.',
@@ -339,6 +374,53 @@ describe('the question as the thread of a delivered request asks it (17-C; secti
     expect(conflictNoticeReplyLine('ab3xyz')).toBe(conflictReplyLine('ab3xyz'));
     expect(conflictNoticeReplyLine('ab3xyz', 2)).toBe(
       'This is question 2 of the plan: answer with “answer ab3xyz 2 A”, “answer ab3xyz 2 B” or “answer ab3xyz 2 both”.',
+    );
+  });
+});
+
+describe('the day’s three by-hand changes (D-6 (a))', (): void => {
+  it('says a fourth change joined without a judgement, and refuses a new card in its own words', (): void => {
+    expect(joinedWithoutProposalWords('Mateo')).toBe(
+      'Added to the card. Mateo will not work out a new proposal for it until tomorrow: you have changed this card three times today.',
+    );
+    expect(byHandChangesWords('Mateo')).toBe(
+      'You have changed Mateo’s cards three times today. Come back tomorrow.',
+    );
+  });
+});
+
+describe('a judgement that failed, by its kind (W17-R8; section 7)', (): void => {
+  it('says the kind’s fixed sentence, and never a provider’s words stored before 0.22.0 (red at the tag: the provider’s first line on the card)', (): void => {
+    const rest =
+      ' Nothing changes unless you act: talk it through with Mira, dismiss the card, or amend the charter yourself.';
+    expect(failedProposalWords('Mira', 'timeout')).toBe(
+      `Mira could not work out a proposal: the model did not answer in time.${rest}`,
+    );
+    expect(failedProposalWords('Mira', 'unreadable')).toBe(
+      `Mira could not work out a proposal: the model’s answer could not be read.${rest}`,
+    );
+    expect(failedProposalWords('Mira', 'refused')).toBe(
+      `Mira could not work out a proposal: the model’s provider refused the request.${rest}`,
+    );
+    // A provider's first line stored by 0.21.0, scrubbed of tokens only, is not said.
+    expect(failedProposalWords('Mira', '400 Bad Request: account acct_9f2 is over its quota')).toBe(
+      `Mira could not work out a proposal for this change.${rest}`,
+    );
+    expect(unproposedWords('Mira', { failedAt: 1, failure: 'refused' })).toBe(
+      'Mira could not work out a proposal: the model’s provider refused the request.',
+    );
+  });
+});
+
+describe('a plan asked again (D-2 (b); section 7)', (): void => {
+  it('quotes the change in double marks, or in single ones round a summary that quotes', (): void => {
+    expect(askedAgainWords('Mira now covers renewals.')).toBe(
+      'Your change to “Mira now covers renewals” does not affect this plan, so it was not drafted again: approve it as it is, or send it back.',
+    );
+    expect(
+      askedAgainWords('Ines Duarte, its approver: now for “refunds”, where it was “none”'),
+    ).toBe(
+      'Your change to ‘Ines Duarte, its approver: now for “refunds”, where it was “none”’ does not affect this plan, so it was not drafted again: approve it as it is, or send it back.',
     );
   });
 });

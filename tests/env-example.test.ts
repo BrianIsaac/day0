@@ -98,11 +98,12 @@ describe('.env.example', (): void => {
     for (const name of read) expect(DECLARED, name).toContain(name);
   });
 
-  it('declares the way out through a proxy, each name empty by default, read by the compose file and by check:setup (17-P)', (): void => {
+  it('declares the way out through a proxy, each name empty by default, read by the compose file and by check:setup from the file alone (17-P; D-9 (a))', (): void => {
     for (const name of PROXY_VARIABLES) {
       expect(EXAMPLE, name).toMatch(new RegExp(`^${name}=$`, 'm'));
       expect(COMPOSE, name).toContain(`\${${name}:`);
-      expect(WATCHED, name).toContain(name);
+      // Re-taken (wave 18, D-9 (a)): the process environment no longer wins for these.
+      expect(WATCHED, name).not.toContain(name);
     }
     expect(EXAMPLE.indexOf('\nHTTPS_PROXY=')).toBeGreaterThan(
       EXAMPLE.indexOf('\nDAY0_PRIVATE_HOSTS='),

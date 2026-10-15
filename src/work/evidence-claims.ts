@@ -579,11 +579,28 @@ function reportedWriteIndexes(
   // (W13-R2). Where it counts more messages than carry its words ("both notes" beside one post
   // that shares a word), the count is the kind's, so every message of the kind is bound with them
   // and a declined one keeps the report back (W16-R31). A plural or "all" is no count: "all the
-  // stop-drill notes" beside one such note and an unrelated post reports the one.
+  // stop-drill notes" beside one such note and an unrelated post reports the one. Where only
+  // another kind of write carries its words ("Added the Acme row and posted the note"), no
+  // message does, so the kind's messages are bound beside that write (D-4 (b), 14 October 2026).
   if (sharing.length === 0) return ofKind;
   const sharingMessages = sharing.filter((index) => ofKind.includes(index)).length;
-  if (sharingMessages >= (messagesCounted(said) ?? 0)) return sharing;
+  // A write reported by its place alone ("Updated the status on REVOPS-9.") names where a comment
+  // would go, not a message it made: only a message verb or a placed message reports one.
+  if (sharingMessages === 0 && !reportsAMessage(said)) return sharing;
+  if (sharingMessages > 0 && sharingMessages >= (messagesCounted(said) ?? 0)) return sharing;
   return [...new Set([...sharing, ...ofKind])].sort((a, b) => a - b);
+}
+
+/** Whether a sentence reports a message by its verb or by where it now is (W13-R2). */
+function reportsAMessage(said: string): boolean {
+  return MESSAGE_REPORT.test(said) || COMMENT_REPORT.test(said);
+}
+
+/** Whether the action at a place of its set is a message: a ticket comment or a chat write. */
+function isMessageAt(earlier: readonly MockAction[], index: number): boolean {
+  const action = earlier[index];
+  const kind = action === undefined ? undefined : writeOf(action)?.kind;
+  return kind === 'comment' || kind === 'chat';
 }
 
 /**
@@ -637,6 +654,24 @@ const COUNTED_MESSAGES = new RegExp(
  */
 const NOT_COUNTING_BEFORE = /(?:\bof\s+(?:the\s+)?|[\d:.,/%-])$/i;
 const SEVERAL_MESSAGES = new RegExp(`\\b(?:${MESSAGES_PLURAL})\\b|\\b(?:all|every|each)\\b`, 'i');
+/**
+ * A message plural that names no messages the run wrote (W17-R21, with D-4 (b)): a span of time
+ * measured in them ("3 weeks of notes", "two days of replies") or a heap of them named by its own
+ * noun ("the 40 messages backlog"). The number in such a span counts the weeks or the backlog's
+ * rows, never the messages a report made.
+ */
+const UNCOUNTED_MESSAGES = new RegExp(
+  [
+    `\\b(?:\\w+\\s+)?(?:minute|hour|day|week|fortnight|month|quarter|year)s?(?:'|'s)?\\s+(?:worth\\s+)?of\\s+(?:[\\w-]+\\s+){0,2}?(?:${MESSAGES_PLURAL})\\b`,
+    `\\b(?:\\d+\\s+|(?:${Object.keys(COUNT_WORDS).join('|')})\\s+)?(?:${MESSAGES_PLURAL})\\s+(?:backlog|queue|pile|inbox|archive|history)\\b`,
+  ].join('|'),
+  'gi',
+);
+
+/** A report sentence without the spans of it that name messages it did not write ({@link UNCOUNTED_MESSAGES}). */
+function withoutUncountedMessages(said: string): string {
+  return said.replace(UNCOUNTED_MESSAGES, ' ');
+}
 
 /**
  * The count of messages a report sentence gives in so many words ("both stop-drill notes", "all
@@ -646,8 +681,9 @@ const SEVERAL_MESSAGES = new RegExp(`\\b(?:${MESSAGES_PLURAL})\\b|\\b(?:all|ever
  * wrote.
  */
 function messagesCounted(said: string): number | undefined {
-  for (const match of said.matchAll(COUNTED_MESSAGES)) {
-    if (NOT_COUNTING_BEFORE.test(said.slice(0, match.index))) continue;
+  const counting = withoutUncountedMessages(said);
+  for (const match of counting.matchAll(COUNTED_MESSAGES)) {
+    if (NOT_COUNTING_BEFORE.test(counting.slice(0, match.index))) continue;
     const counted = match[1]!.toLowerCase();
     return COUNT_WORDS[counted] ?? Number(counted);
   }
@@ -660,7 +696,7 @@ function messagesCounted(said: string): number | undefined {
  * the second note." asks one write of its declaration and "Posted both notes." two (W15-R2).
  */
 function messagesNamed(said: string): number {
-  return messagesCounted(said) ?? (SEVERAL_MESSAGES.test(said) ? 2 : 1);
+  return messagesCounted(said) ?? (SEVERAL_MESSAGES.test(withoutUncountedMessages(said)) ? 2 : 1);
 }
 
 /** A token that is an issue key (`revops-6`), which names an item rather than reporting a value. */
@@ -892,13 +928,25 @@ function reportsDisagreements(
       const ofKind = reportedWriteIndexes(clause, earlier);
       const covered = new Set([...named, ...byWords]);
       const holds = ofKind.filter((at) => covered.has(at)).length;
-      if (byWords.length > 0 && holds >= Math.min(messagesCounted(said) ?? 0, ofKind.length)) {
+      // Words that name a message's kind and carry no message's words name no message by
+      // themselves, whatever other write they name (D-4 (b)).
+      const wordsNameAMessage =
+        !namesMessageKind(said) ||
+        !reportsAMessage(said) ||
+        byWords.some((at) => isMessageAt(earlier, at));
+      if (
+        byWords.length > 0 &&
+        wordsNameAMessage &&
+        holds >= Math.min(messagesCounted(said) ?? 0, ofKind.length)
+      ) {
         continue;
       }
       // The words name only a kind of message ("both notes"), or fewer than they count, which
       // binds nothing beside a declaration: the declaration and the words must then hold as many
-      // of that kind as the sentence says.
-      if (holds >= Math.min(messagesNamed(said), ofKind.length)) continue;
+      // messages of that kind as the sentence says.
+      const messages = ofKind.filter((at) => isMessageAt(earlier, at));
+      const heldMessages = messages.filter((at) => covered.has(at)).length;
+      if (heldMessages >= Math.min(messagesNamed(said), messages.length)) continue;
       issues.push(
         `action ${index} (${describeAction(action)}) reports more writes of this set than its \`reports\` names: it says "${sentence}" and \`reports\` names ${declaredList}, while the writes before it that the sentence can mean are [${ofKind.join(', ')}]; list in \`reports\` every earlier write of this set the message reports, or word the message as what it reports`,
       );

@@ -5,6 +5,7 @@ import {
   PAGE_REDACTION_REVISION,
   REDACTOR_MODELS_DIGEST,
   pageContentHash,
+  pageTitleHash,
 } from '../../../src/docs/content-hash';
 import { sha256OfText } from '../../../src/lib/sha256';
 import { credentialValueFingerprint } from '../../../src/lib/credential-crypto';
@@ -19,6 +20,32 @@ const PAGE = {
   url: 'https://docs.example.test/refresh',
   markdown: '# Refresh the tile\n\npassword: hunter2-value',
 };
+
+describe('pageTitleHash (18-D; the 17-X F4 residual)', (): void => {
+  // A token-shaped title assembled at runtime so no literal matches a scanner's shape.
+  const TITLE = `Rotate ${['sk', 'live', '51Hq7example0123456789abcd'].join('_')}`;
+
+  it('is a keyed hash of the listed title, bound to the owner, 32 hex characters', (): void => {
+    const hash = pageTitleHash(TITLE, KEY_A, 'owner-a');
+    expect(hash).toMatch(/^[0-9a-f]{32}$/);
+    expect(pageTitleHash(TITLE, KEY_A, 'owner-a')).toBe(hash);
+    expect(pageTitleHash(TITLE, KEY_B, 'owner-a')).not.toBe(hash);
+    expect(pageTitleHash(TITLE, KEY_A, 'owner-b')).not.toBe(hash);
+    expect(pageTitleHash(`${TITLE}.`, KEY_A, 'owner-a')).not.toBe(hash);
+  });
+
+  it('reads the title as the sync stores it: its white space closed up and a closing “ #” dropped', (): void => {
+    const hash = pageTitleHash('Q3 close plan', KEY_A, 'owner-a');
+    expect(pageTitleHash('Q3  close plan', KEY_A, 'owner-a')).toBe(hash);
+    expect(pageTitleHash('Q3 close plan #', KEY_A, 'owner-a')).toBe(hash);
+  });
+
+  it('never equals the page’s hash or a credential fingerprint of the same text', (): void => {
+    const hash = pageTitleHash(TITLE, KEY_A, 'owner-a');
+    expect(hash).not.toBe(credentialValueFingerprint(TITLE, KEY_A, 'owner-a'));
+    expect(hash).not.toBe(pageContentHash({ title: TITLE, markdown: '' }, KEY_A, 'owner-a'));
+  });
+});
 
 describe('pageContentHash', (): void => {
   it('is the same for the same page, owner and key', (): void => {

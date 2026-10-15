@@ -188,7 +188,12 @@ vi.mock('convex/react', () => {
       };
     }
     if (name === 'roster:page') return shown;
-    if (name === 'work:needsYou') return state.inbox;
+    // The inbox is read by pages (wave 18, 18-F): the fixture is every page, the last one.
+    if (name === 'work:needsYou') {
+      return state.inbox === undefined || state.inbox instanceof Error
+        ? state.inbox
+        : { ...(state.inbox as object), isDone: true, continueCursor: '' };
+    }
     if (name === 'agents:employeesReportingElsewhere') return state.reportingElsewhere;
     if (name === 'managerTransfers:departures') return state.departures;
     if (name === 'transferAcceptance:transferPreview') return state.preview;
@@ -608,8 +613,9 @@ describe('the company home', (): void => {
   });
 
   it('counts what waits for an employee the inbox does not reach from that employee’s own row (the second pass, 17-F)', (): void => {
-    // The inbox reads the newest employees only (twenty; here two), where the roster now lists
-    // every one: the third employee's two things were a 0 in its column and missing from the count.
+    // An employee the inbox's last whole read has not reached (one deployed since it was read; it
+    // read the newest twenty before wave 18), where the roster lists every one: the third
+    // employee's two things were a 0 in its column and missing from the count.
     const markup = render(
       [roster[0], roster[2], { ...roster[1], name: 'Earlier colleague', needsYou: 2 }],
       {

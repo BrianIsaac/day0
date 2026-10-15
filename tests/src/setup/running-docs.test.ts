@@ -222,11 +222,15 @@ describe('the pages the checks send a reader to', (): void => {
     expect(hosts.size).toBeGreaterThan(30);
     expect([...hosts].filter((host) => !page.includes(`\`${host}\``))).toEqual([]);
     // What is not given the proxy is said beside its host, so a reader of the table alone knows.
+    // Re-taken (wave 18, 17-P's F6): the Notion component and the model service take it now; a
+    // listed git host still dials directly.
     const row = (host: string): string =>
-      page.split('\n').find((line) => line.startsWith('|') && line.includes(`\`${host}\``)) ?? '';
+      page.split('\n').find((line) => line.startsWith(`| \`${host}\``)) ?? '';
     for (const host of ['api.notion.com', 'registry.npmjs.org', 'registry.ollama.ai']) {
-      expect(row(host), host).toContain('(directly: see above)');
+      expect(row(host), host).not.toBe('');
+      expect(row(host), host).not.toContain('directly');
     }
+    expect(row('github.com')).toContain('a listed host directly');
   });
 
   it('give on the upgrade page the way back as the upgrade prints it', (): void => {
@@ -271,19 +275,24 @@ describe('the runbook and the components page, on the two proxies (wave 17, 17-P
         (service.environment ?? []).some((entry) => entry.startsWith('HTTPS_PROXY=')),
       )
       .map(([name]) => name);
-    expect(handed.sort()).toEqual(['backend', 'nango-server', 'redactor', 'slack-socket']);
+    // Re-taken (wave 18, 17-P's F6): the Notion component, the browser and the bundled model
+    // service's pulls, which reached out without it until 0.22.0, are handed it too.
+    expect(handed.sort()).toEqual([
+      'backend',
+      'docs-notion-mcp',
+      'model',
+      'nango-server',
+      'playwright-mcp',
+      'redactor',
+      'slack-socket',
+    ]);
     const from = COMPONENTS.indexOf('## Which components reach out');
     expect(from).toBeGreaterThan(0);
     const section = COMPONENTS.slice(from, COMPONENTS.indexOf('\n---', from));
-    const [given, notGiven] = section.split('reach out too and are not handed it');
-    for (const name of handed) expect(given).toContain(`\`${name}\``);
-    // Every other service that fetches something from outside the machine, by the page's own
-    // list of hosts: the Notion component, the browser, and the bundled model service's pulls.
-    for (const name of ['docs-notion-mcp', 'playwright-mcp', 'model']) {
-      expect(given).toContain(`\`${name}\``);
-      expect(handed).not.toContain(name);
-    }
-    expect(notGiven).toContain('](egress.md)');
+    for (const name of handed) expect(section).toContain(`\`${name}\``);
+    expect(section).toContain('hands it\nto all seven');
+    expect(section).not.toContain('not handed it');
+    expect(section).toContain('](egress.md)');
   });
 });
 
@@ -307,12 +316,37 @@ describe('the way out’s page and the runbook, on where the proxy is named (W17
     expect(EGRESS).toContain('After you change `NO_PROXY` in `.env.local`: `./setup.sh resume`');
   });
 
-  it('says the proxy is named in .env.local and nowhere else, and to name it once the containers reach it', (): void => {
+  // Re-taken (wave 18, D-9 (a)): the shell's proxy is no longer read by Day0, so the page says what
+  // Day0 does with one and keeps the unset for pnpm itself, Node's switch among the names.
+  it('says the proxy is named in .env.local and nowhere else, that the shell’s is not read, and to name it once the containers reach it', (): void => {
     expect(EGRESS).toContain('Name the proxy in `.env.local` and nowhere else');
+    expect(EGRESS).toContain('since 0.22.0 Day0 reads it from there alone');
+    expect(EGRESS).toContain('reaches no process Day0 starts, no container and not the deployment');
     expect(EGRESS).toContain(
-      '`unset HTTPS_PROXY HTTP_PROXY NO_PROXY https_proxy http_proxy no_proxy`',
+      '`unset HTTPS_PROXY HTTP_PROXY NO_PROXY NODE_USE_ENV_PROXY https_proxy http_proxy no_proxy`',
     );
     expect(EGRESS).toContain('The backend container has no route to');
+  });
+
+  // W18-R20 (the wave 18 review, reader 5): the one new environment name was in no page, and the
+  // password the deployment holds beside the proxy's address was not said (D-9 (a)).
+  it('names the shell-proxy mark, and says the proxy’s password sits on the deployment with Day0’s other keys (W18-R20, D-9 (a))', (): void => {
+    expect(EGRESS).toContain('`DAY0_SHELL_PROXY`');
+    expect(EGRESS).toContain(
+      "the address on the deployment (below), its password included, which holds it as it holds Day0's other keys",
+    );
+    expect(EGRESS).toContain('`npx convex env list`');
+  });
+
+  // W17-R27 and 17-P's F6 on the 18-P bed: NO_PROXY as Node reads it, and nothing left saying the
+  // Notion component, the browser or a GitHub source dials past the proxy.
+  it('reads NO_PROXY as Node does, and names what the beds found takes the proxy and what does not', (): void => {
+    expect(EGRESS).toContain('list both (`acme.com,.acme.com`)');
+    expect(EGRESS).toContain('an address range (`10.0.0.0/8`) is not read at all');
+    expect(EGRESS).not.toContain('not established');
+    expect(EGRESS).not.toContain('Neither is handed the proxy');
+    expect(EGRESS).toContain('**Nango’s token requests.**'.replace('’', "'"));
+    expect(EGRESS).toContain('`http://user:password@proxy.acme.com:3128`');
   });
 
   it('asks IT before the day for the proxy’s address in the form the file takes', (): void => {
@@ -350,12 +384,43 @@ describe('the readers’ guides on a page with no text, and the README on fifty 
     },
   );
 
-  it('says in the README that a company-wide agreement is checked only while the owner has fifty employees or fewer', (): void => {
+  // Re-pinned (18-A's F4, D-5 (a)): the check reads sixty employees, `EMPLOYEES_CHECKED`. The
+  // heading said fifty over a body that says sixty (W18-R23): it says both now, in both halves.
+  it('says in the README that a company-wide agreement is checked only while the owner has sixty employees or fewer', (): void => {
     const readme = flat('README.md');
-    expect(readme).toContain('### Fifty employees or fewer');
+    expect(readme).toContain('### Built for fifty, checked to sixty');
+    expect(readme).toContain('#### 为五十名员工而建，检查到六十名');
+    expect(readme).not.toContain('Fifty employees or fewer');
     expect(readme).toContain(
-      "a company-wide working agreement is checked against each employee's charter only while you have fifty employees or fewer",
+      "a company-wide working agreement is checked against each employee's charter only while you have sixty employees or fewer",
     );
-    expect(readme).toContain('五十名或更少');
+    expect(readme).toContain('until you have sixty or fewer again');
+    expect(readme).toContain('只在你拥有六十名或更少员工时');
+    expect(readme).toContain('直到你的员工回到六十名或更少');
+  });
+});
+
+// W18-R23 (the wave 18 review, reader 6; W17-R29's remainder): the reader guides' prose said
+// "day0" in about twenty-five lines, the habit of the guides before W17-R29 named the product
+// Day0 everywhere else. A host, an address or a code span keeps its own spelling.
+describe('the running pages’ prose (W18-R23)', (): void => {
+  /** A page's prose: its fenced blocks and code spans taken out. */
+  const prose = (name: string): string =>
+    readFileSync(new URL(`../../../docs/running/${name}`, import.meta.url), 'utf8')
+      .replace(/^```[\s\S]*?^```/gm, '')
+      .replace(/`[^`\n]*`/g, '');
+
+  it('names the product Day0 in every sentence, never "day0"', (): void => {
+    const pages = readdirSync(new URL('../../../docs/running/', import.meta.url)).filter((name) =>
+      name.endsWith('.md'),
+    );
+    expect(pages.length).toBeGreaterThan(10);
+    const lowerCase = pages.flatMap((name) =>
+      prose(name)
+        .split('\n')
+        .filter((line) => /(?<![\w@./-])day0(?![\w@-]|\.\w)/.test(line))
+        .map((line) => `${name}: ${line.trim()}`),
+    );
+    expect(lowerCase).toEqual([]);
   });
 });

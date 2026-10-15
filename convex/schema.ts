@@ -658,7 +658,8 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index('by_user', ['userId']),
 
-  // Phase 2 lane A - generation fences and safe cursors for 25-page sync batches.
+  // Phase 2 lane A - generation fences and cursors for 25-page sync batches; a cursor may carry
+  // a reader's token sealed under the credential key and bound to the run (X-1), never in clear.
   docSyncRuns: defineTable({
     sourceId: v.id('docSources'),
     cursor: v.optional(v.string()),
@@ -773,6 +774,16 @@ export default defineSchema({
      * a page is redacted again at its next sync, which then writes the hash.
      */
     contentHash: v.optional(v.string()),
+    /**
+     * A keyed hash of the page's title as its source listed it, before redaction (wave 18, 18-K
+     * for 18-D and 18-X; the 17-X F4 residual), under the key and owner binding `contentHash`
+     * uses, so no title text and no unkeyed digest of a secret is stored. It is there so a title
+     * holding a value the redaction removes need not read as changed at every sync: the page
+     * store writes it (18-D) and the readers compare it (18-X), each landing after this step.
+     * Absent on a page stored before it is written, where the stored title is compared, as
+     * before. Never part of `contentHash`.
+     */
+    titleHash: v.optional(v.string()),
     /**
      * The page's status, the outcome of the inputs below (wave 15, 15-K for 15-A; K-2). Absent
      * reads as `active` (`pageStatusOf`, `src/docs/authority.ts`). Never part of `contentHash`: a
@@ -1577,6 +1588,16 @@ export default defineSchema({
      */
     planDraftedWithout: v.optional(planDraftedWithoutValidator),
     /**
+     * When a reorientation card held this row's plan through a change the plan does not rest on
+     * (wave 18, 18-K for 18-O; RM43 (a), D-2 (b)): the plan is kept, not drafted again, and goes
+     * to the manager whatever the autonomy switch says, as a plan whose skip the manager
+     * overruled does. On the row so the work loop's recovery, which asks `decidePlan` again, can
+     * read it too. Written by `releaseHeldWork`, read by `decidePlan` and cleared wherever a plan
+     * is cleared (18-O, landing after this step). Absent reads as before: `decidePlan` decides as
+     * the switch says.
+     */
+    heldThroughChangeAt: v.optional(v.number()),
+    /**
      * A manager rejected an earlier plan for this item; its own redraft needs
      * explicit approval. A plan rejection also sets `rejectedAt`, which is
      * what a sibling's plan is held on (N3); this field stands in for it only
@@ -1759,6 +1780,11 @@ export default defineSchema({
       'decision.closeClaimedAt',
     ])
     .index('by_skill', ['skillId'])
+    /**
+     * One skill's rows in one state (wave 18, 18-K for 18-O; W17-R8): the reach by skill reads
+     * the rows still open, where `by_skill` reads the oldest of a skill whatever their state.
+     */
+    .index('by_skill_state', ['skillId', 'state'])
     /** One employee's row for a provider item: intake's idempotency key. */
     .index('by_agent_extId', ['agentId', 'sourceSystem', 'externalId'])
     /** Every work item discovered from one provider item, across employees, by either of its names. */
@@ -2042,7 +2068,12 @@ export default defineSchema({
      * were claimed: the five-minute sweep's read of a send that died holding its claim (12-W,
      * N-3), which never reads the sent history.
      */
-    .index('by_agent_claim_open', ['agentId', 'providerTs', 'failure', 'discardedAt', 'claimedAt']),
+    .index('by_agent_claim_open', ['agentId', 'providerTs', 'failure', 'discardedAt', 'claimedAt'])
+    /**
+     * One agent's notes a digest send claimed (wave 18, 18-K for 18-W; W17-R22): the digest's
+     * sweep reads one digest's notes here instead of filtering every stuck note on `digestId`.
+     */
+    .index('by_agent_digest', ['agentId', 'digestId']),
 
   /**
    * The manager's corrections, kept for the employee's later work: a note

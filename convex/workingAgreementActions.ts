@@ -342,9 +342,12 @@ async function watchOver(
       );
 }
 
-/** Cancel a run's watch, if it keeps one. */
+/**
+ * End a run's watch, if it keeps one, through a mutation: the node runtime refuses a cancel from
+ * an action (`workingAgreements.endCheckWatch`).
+ */
 async function endWatch(ctx: ActionCtx, watch: Id<'_scheduled_functions'> | null): Promise<void> {
-  if (watch !== null) await ctx.scheduler.cancel(watch);
+  if (watch !== null) await ctx.runMutation(internal.workingAgreements.endCheckWatch, { watch });
 }
 
 /**

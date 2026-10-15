@@ -1,59 +1,67 @@
 # Reading a Google Drive folder
 
-This page is for the IT administrator who makes the service account day0 reads with, the
+This page is for the IT administrator who makes the service account Day0 reads with, the
 folder's owner who shares the folder with it, and the manager who links the folder on the
-Documentation page. day0 reads one Google Drive folder and the folders under it, and keeps each
+Documentation page. Day0 reads one Google Drive folder and the folders under it, and keeps each
 document as Markdown beside the team's other documentation. It reads as a service account,
 never as a person, and it only reads: it writes nothing to Drive.
 
 A folder can also be read through a Google Drive MCP server the company already runs (the **MCP
 server** kind). Use one or the other for a folder, not both.
 
-## What day0 reads
+## What Day0 reads
 
 - Every **Google Doc** in the folder and the folders under it, exported by Google as Markdown,
   under the document's name.
-- Every **Word document** (`.docx`), converted to Markdown where day0 runs: its headings (made
+- Every **Word document** (`.docx`), converted to Markdown where Day0 runs: its headings (made
   with Word's heading styles), lists, tables and emphasis are kept, its pictures left out.
 - A document in the **bin** is read and marked archived, so an employee does not act on it. When
-  Google empties the bin, day0 drops it.
+  Google empties the bin, Day0 drops it.
 - These are named as not read, with the reason: a Google Doc over the 10 MB Google exports, a
   Word document over 16 MiB, a slide deck, a PDF and a Word document in the old `.doc` format.
   Any other file (a sheet, an image) is not listed.
 - The service account sees only what is shared with it. A document in the folder that its owner
-  has restricted is simply not there for day0.
+  has restricted is simply not there for Day0.
 - The folder is read again on the same schedule as every other source. When Google says a rate
-  limit is reached (HTTP 403 `userRateLimitExceeded` or `rateLimitExceeded`, or HTTP 429), day0
+  limit is reached (HTTP 403 `userRateLimitExceeded` or `rateLimitExceeded`, or HTTP 429), Day0
   waits one, two, then four seconds before it asks again.
 
 ## What a read asks of Google
 
-day0 lists the folder at every read, twenty-five files a request, and exports or downloads a
-document only when its listing says it changed since day0 last read it: its version moved, or
-its name or address did. A read that finds nothing changed therefore exports and downloads
-nothing. Google moves a file's version with every change on its servers, among them one nobody
-sees in the text (a new share, a comment), so a document is read again more often than its text
-changes and never less often. One exception: a document whose name holds a value day0 takes out
-of what it stores (a password written into a name) is read at every read of the folder, because
-the name it was stored under is no longer the one its listing gives. Another: a page with no
-text under its title, such as a document that holds a title and images alone, is asked for at
-every read and then kept by its text, since a listing's version is kept only for a page with text
-to keep.
+Day0 lists the folder at every read, twenty-five files a request, and exports or downloads a
+document only when its listing says it changed since Day0 last read it: its version moved, or its
+name or address did. A read that finds nothing changed therefore exports and downloads nothing.
+Google moves a file's version with every change on its servers, among them one nobody sees in the
+text (a new share, a comment), so a document is read again more often than its text changes and
+never less often. A document whose name holds a value Day0 takes out of what it stores (a password
+written into a name) is stored under the name with that value taken out, and beside it a fingerprint
+of the name its listing gave, keyed with Day0's credential key so it gives nothing of the value
+away; a later read keeps the document by that fingerprint. One exception: such a document is read
+once more after an upgrade from 0.21.0 and after the credential key changes, to take its fingerprint
+again. Another: a page with no text under its title, such as a document that holds a title and
+images alone, is asked for at every read and then kept by its text, since a listing's version is
+kept only for a page with text to keep.
 
-Counted on the test double of the Drive API that day0's own tests use, not on a project. The bed
-is a running day0 in real mode reading a folder of 250 Google Docs; the second column is the same
-double at a thousand, read by the reader's tests:
+Counted on the test double of the Drive API that Day0's own tests use, not on a project. The bed
+is a running Day0 0.21.0 in real mode reading a folder of 250 Google Docs, counted on 13 October
+2026, before Day0 kept its token across a read; the second column is the same double at a
+thousand, read by this release's reader in its tests:
 
-| Read                              | Requests, 250 documents (the bed) | Requests, 1,000 documents (the tests) |
-| --------------------------------- | --------------------------------- | ------------------------------------- |
-| The first read                    | 271                               | 1,081                                 |
-| A read with nothing changed       | 21                                | 81                                    |
-| A read after one document changed | 22                                | 82                                    |
+| Read                              | Requests, 250 documents (the 0.21.0 bed) | Requests, 1,000 documents (the tests) |
+| --------------------------------- | ---------------------------------------- | ------------------------------------- |
+| The first read                    | 271                                      | 1,042                                 |
+| A read with nothing changed       | 21                                       | 42                                    |
+| A read after one document changed | 22                                       | 43                                    |
 
-The 81 are 40 token requests (day0 asks for a token again for every twenty-five files), one check
-of the folder and 40 listings. A folder under it is listed in requests of its own: a token
-request and a listing for every twenty-five of its files, and one of each for an empty folder.
-The first read adds an export or a download for every document.
+The 42 are one token request, one check of the folder and 40 listings. Day0 asks for a token once
+a read and lists every later twenty-five files with the same token, asking again only when it is
+within two minutes of its expiry (Google gives it an hour) or Google refuses it. Between those
+requests Day0 keeps the token encrypted with its credential key in its own record of where the
+read stands, never in a log or the export, and drops it when the read ends. 0.21.0 asked for a
+token again for every twenty-five files: 40 of its 81 requests at a thousand documents, and 10 of
+the bed's 21. A folder under it is listed in requests of its own: a listing for every
+twenty-five of its files, and one for an empty folder. The first read adds an export or a
+download for every document.
 
 Google's page on the Drive API's limits (last updated 11 September 2026) charges a listing 100
 quota units and allows 325,000 units a minute for each user of a project, so the 40 listings of
@@ -64,8 +72,8 @@ project.
 
 1. In the **Google Cloud console**, in a project of your organisation, enable the **Google
    Drive API** (APIs and services, Library).
-2. Create a **service account** for day0 (IAM and admin, Service accounts). It needs no role in
-   the project. Do **not** give it domain-wide delegation: day0 does not use it.
+2. Create a **service account** for Day0 (IAM and admin, Service accounts). It needs no role in
+   the project. Do **not** give it domain-wide delegation: Day0 does not use it.
 3. For the service account, create a **key** of type JSON (Keys, Add key). The browser downloads
    a `.json` file. Treat it as a password: the manager pastes its contents once, and it can then
    be deleted.
@@ -82,17 +90,17 @@ On the Documentation page, under **Link a documentation location**:
 
 1. **Kind of location**: Google Drive folder.
 2. **Location label**: a name your team recognises, for example `Runbooks folder`.
-3. **Where it is**: the folder's address as your browser shows it. day0 keeps only the folder,
+3. **Where it is**: the folder's address as your browser shows it. Day0 keeps only the folder,
    for example `https://drive.google.com/drive/folders/1AbCdEf...`.
 4. **Service account key**: paste the whole contents of the JSON file from step 1. It is
-   encrypted when you submit the form, used only to sign day0's requests to Google, and never
+   encrypted when you submit the form, used only to sign Day0's requests to Google, and never
    shown again.
 5. **Link location**. The first read starts at once; the table shows its progress.
 
 To replace the key later, use **Rotate** on the source's row and paste the new JSON file's
 contents. To change the folder, **Unlink** the source and link it again.
 
-## What a page day0 cannot read shows
+## What a page Day0 cannot read shows
 
 - `"Full CRM export" is larger than the 10 MB Google exports, so Day0 does not read it.`
 - `"Q3 board deck" is a slide deck, which Day0 does not read: from a Google Drive folder it reads
@@ -115,7 +123,7 @@ Cloud, then use Rotate on the source's row to paste it.`
 - `Google Drive refused this request (HTTP 403, accessNotConfigured): the Google Drive API is not
 enabled in the service account's Google Cloud project. Ask IT to enable it there (APIs and
 services, Library, Google Drive API).` Step 1, point 1.
-- `Google Drive was rate limited (HTTP 403).` Google stayed over its limit past day0's waits; the
+- `Google Drive was rate limited (HTTP 403).` Google stayed over its limit past Day0's waits; the
   next read tries again.
 - `Day0 could not reach www.googleapis.com: ...` Nothing answered at that host from the machine
   the backend runs on. See the next section.
@@ -129,11 +137,12 @@ proxy.
 
 ## Not yet checked against a real project
 
-The reader is built against Google's published reference for the Drive API and for service
-accounts (read 10 October 2026), with test answers written from that reference, not recorded
-from a project: **no tenant read yet**. Until one is, these are known only from the reference:
-the word Google gives an export over 10 MB; whether a folder in a shared drive lists as one in
-My Drive does; how Google's Markdown export writes a document's own title; and how often a
-file's version moves with no change to its text. The request counts above are from day0's own
-test double. If a first install finds any of them different, tell the day0 maintainers so this
-page can say what is true.
+The reader is built against Google's published reference for the Drive API and for service accounts
+(read 10 October 2026), with test answers written from that reference, not recorded from a project:
+**no tenant read yet**. Until one is, these are known only from the reference: the word Google gives
+an export over 10 MB; whether a folder in a shared drive lists as one in My Drive does; how Google's
+Markdown export writes a document's own title; and how often a file's version moves with no change
+to its text; and whether a token lasts as long as Google's answer says (Day0 keeps it for the rest
+of a read until two minutes before the expiry named, and asks again if Google refuses it sooner).
+The request counts above are from Day0's own test double and its 0.21.0 bed. If a first install
+finds any of them different, tell the Day0 maintainers so this page can say what is true.

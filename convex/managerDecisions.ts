@@ -25,10 +25,11 @@ import { scheduleRequestClose, settleBatchesHolding } from './decisionRequests';
  * standard's 9.2): a plan approved or turned down, a held set approved row by row or rejected, the
  * same whether the card or the channel decided, with the request marked decided and the manager's
  * words kept; moved out of `convex/work.ts` unchanged. The registered decisions
- * (`work:approveActions`, `work:approveActionsBatch`, `work:rejectActions`, `work:cancelPlan`,
- * and `planApproval:approvePlan` above `convex/work.ts`) call these. This module sits below
- * `convex/work.ts`: `convex/work.ts` imports it and it never imports `./work`, so the move closes
- * no import cycle. It registers no function.
+ * (`work:approveActions`, `work:approveActionsBatch`, `work:rejectActions`, `work:cancelPlan`, and
+ * `planApproval:approvePlan` above `convex/work.ts`) call these, the batch's through its body in
+ * `convex/workManagerChannel.ts` (wave 18, 18-s). This module sits below `convex/work.ts`:
+ * `convex/work.ts` imports it and it never imports `./work`, so the move closes no import cycle. It
+ * registers no function.
  */
 
 /** The manager's words as kept: whitespace collapsed and capped at `MANAGER_FEEDBACK_MAX_CHARS`. */

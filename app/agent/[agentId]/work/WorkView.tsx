@@ -26,7 +26,9 @@ import { WorkQueue } from './WorkQueue';
 
 /**
  * The plans a standing high-risk reorientation card holds, each by its work item (W-9): what
- * `reorientation.heldByReorientation` stops Day0 approving on its own.
+ * `reorientation.heldByReorientation` stops Day0 approving on its own. And, marked `decided`, the
+ * plans a decided card held, newest decision first, for a plan its Approve asked again rather
+ * than drafting it again to say which change does not affect it (D-2 (b)).
  *
  * @param cards - The employee's cards, as the reorientation page lists them.
  */
@@ -34,16 +36,39 @@ export function holdingCardsOf(
   cards: FunctionReturnType<typeof api.reorientationDecisions.listForAgent>,
 ): Map<string, HoldingCard> {
   const held = new Map<string, HoldingCard>();
+  const decided = (status: string): boolean => status === 'applied' || status === 'dismissed';
   for (const { card } of cards) {
-    if (card.risk !== 'high' || card.status === 'applied' || card.status === 'dismissed') continue;
+    if (card.risk !== 'high' || decided(card.status)) continue;
     for (const workItemId of card.blockingWork) {
       if (!held.has(workItemId)) {
         held.set(workItemId, { reorientationId: card._id, summary: card.triggerSummary });
       }
     }
   }
+  const byDecision = cards
+    .map((view) => view.card)
+    .filter((card) => decided(card.status))
+    .sort((left, right) => (right.decidedAt ?? 0) - (left.decidedAt ?? 0));
+  for (const card of byDecision) {
+    for (const workItemId of card.blockingWork) {
+      if (!held.has(workItemId)) {
+        held.set(workItemId, {
+          reorientationId: card._id,
+          summary: card.triggerSummary,
+          decided: true,
+        });
+      }
+    }
+  }
   return held;
 }
+
+/**
+ * What the Work tab says under its list when the list's bounds left rows out (W17-R22; section
+ * 7's draft names how many, which the bounded read cannot count: decision W-1). It says some, not
+ * the oldest: the rows left out may be newer finished ones (W18-R14, D-10 (a)).
+ */
+export const WORK_LIST_CUT = 'Some rows are not shown here; they are in the export.';
 
 /**
  * The Work tab: the employee's queue, what needs the manager first, beside the corrections the
@@ -60,7 +85,8 @@ export function WorkView() {
     () => runHoldOf({ real, employeeName: agent.name, employeePaused, scheduledWorkPaused }),
     [real, agent.name, employeePaused, scheduledWorkPaused],
   );
-  const workItems = useQuery(api.work.listForAgent, { agentId });
+  const workList = useQuery(api.work.listForAgent, { agentId });
+  const workItems = workList?.items;
   const openQuestions = useQuery(api.managerQuestions.openForAgent, { agentId });
   // A plan's conflict question beside it (RM20 (a)): real mode only, as documentation conflicts are.
   const conflictQuestions = useQuery(
@@ -144,6 +170,11 @@ export function WorkView() {
         refusedSkills={refusedSkills}
         hold={hold}
       />
+      {workList?.cut === true ? (
+        <p role="note" className="text-[13px] text-[var(--color-muted)]">
+          {WORK_LIST_CUT}
+        </p>
+      ) : null}
       <StateGlossary />
     </Columns>
   );

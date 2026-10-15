@@ -528,7 +528,8 @@ export function adoptionWords(input: AdoptionWordsInput): AdoptionWords {
   const under =
     input.connection !== undefined ? ` under ${adopterName}'s ${input.connection} connection` : '';
   const scopes = {
-    scopesLead: `Scopes ${adopterName} would gain`,
+    // The lead precedes the access in words (`accessWords`, W17-R30), so it says access (18-T's F5).
+    scopesLead: `Access ${adopterName} would gain`,
     noScopes: `${adopterName} already holds every scope the skill needs.`,
   };
   switch (input.state) {

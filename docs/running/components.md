@@ -1,7 +1,7 @@
 # Components
 
 Day0 is one program and a handful of optional components. The program is the
-backend; each component is one thing day0 cannot do by itself, and you start
+backend; each component is one thing Day0 cannot do by itself, and you start
 only the ones your systems need.
 
 **The one line to decide by:** start a component when your team's documentation
@@ -10,7 +10,7 @@ leave out costs you the systems it reaches and nothing else. Day0 still reads
 the documentation, still proposes the path the documentation records, and still
 says on the card which component is missing.
 
-Components are compose profiles. `real` is day0 itself and is always on.
+Components are compose profiles. `real` is Day0 itself and is always on.
 `./setup.sh --route <route>` starts what a real-mode installation needs without
 your naming any of them: `real`, `docs-notion`, `browser`, `demo` and
 `slack-socket` in one `pnpm convex:up`, then `sandbox` and `redactor` as steps of their own, because
@@ -22,6 +22,15 @@ pnpm convex:up --profile docs-notion --profile browser --profile demo --profile 
 pnpm sandbox:up
 pnpm redactor:up                        # MODEL_GPU=off pnpm redactor:up on the CPU
 ```
+
+The setup and its verbs (`upgrade`, `resume`, `pause`, `restore`) start the
+stack from `docker-compose.yml` alone, with `.env.local`; they read no
+`docker-compose.override.yml` and no `COMPOSE_FILE`, which `pnpm convex:up` by
+hand does. An override that changes Day0's networks (a subnet, an internal
+network) therefore stops those verbs at their `convex:up`, "network ... has
+active endpoints", with nothing pushed: a test bed with such an override met
+it on 14 October 2026. Choose the address range Docker gives its networks in
+the daemon's own settings (`default-address-pools`), not in an override.
 
 | You have | The profiles |
 |---|---|
@@ -36,7 +45,7 @@ read-only before anything starts, and the start then downloads nothing.
 
 `pnpm check:setup` prints which components are running, which ones your linked
 documentation depends on, and any half-state: a component configured with
-nothing listening, or one running that day0 was never told about.
+nothing listening, or one running that Day0 was never told about.
 
 ## Where each component listens
 
@@ -70,22 +79,26 @@ proxy](proxy.md)).
 
 ## Which components reach out
 
-Four of them leave the machine: `backend` (the model, the systems an
+Seven of them leave the machine: `backend` (the model, the systems an
 approved card reaches, the documentation readers), `slack-socket` (Slack's
-Socket Mode hosts), `redactor` (its wheels and model, on a first start) and
-`nango-server` (the providers' token endpoints). Where `.env.local` names an
-HTTP proxy (`HTTPS_PROXY`), the compose file hands it to those four, with
-Day0's own service names always kept out of it. `docs-notion-mcp`,
-`playwright-mcp` and `model` (its model pulls, on the local-model way)
-reach out too and are not handed it. [The way out](egress.md) lists every
-host, what each component did with a proxy on a bed whose only route out
-was one, and what needs a direct route.
+Socket Mode hosts), `redactor` (its wheels and model, on a first start),
+`nango-server` (the providers' token endpoints), `docs-notion-mcp` (its npm
+package and Notion's API), `playwright-mcp` (the pages the browser is sent
+to) and `model` (its model pulls, on the local-model way). Where
+`.env.local` names an HTTP proxy (`HTTPS_PROXY`), the compose file hands it
+to all seven (whether the browser's own page loads and the model service's
+pulls take it was not run on a bed; Nango's token requests do not:
+[The way out](egress.md)), with Day0's own service names always kept out of it, and
+since 0.22.0 only `.env.local` names it: a proxy exported in the shell
+reaches none of them. [The way out](egress.md) lists every host, what each
+component did with a proxy on a bed whose only route out was one, and what
+needs a direct route.
 
 ---
 
-## `backend` - day0 itself
+## `backend` - Day0 itself
 
-**What it is.** The Convex backend: day0's database and the code that runs in
+**What it is.** The Convex backend: Day0's database and the code that runs in
 it. The 1:1 that produces a charter, the rules the manager confirms or strikes
 on it, its amendments and open questions, the orientation run that proposes a
 connection, the approval gate, the work loop with its one scope judgement and
@@ -93,7 +106,7 @@ the re-evaluation of parked work, the retry waivers, the batched approvals, the
 notes and digests the manager receives, the skill author with its static gate,
 and the ledger are all here.
 
-**What day0 uses it for.** Everything. It also mounts your documentation folder
+**What Day0 uses it for.** Everything. It also mounts your documentation folder
 read-only, so a folder source needs no other component.
 
 **When you need it.** Always. Nothing runs without it, and every other profile
@@ -126,7 +139,7 @@ a prompt or a ledger row.
 **What it is.** Notion's own MCP server, run inside your network. It is named
 for the vendor because it is that vendor's software.
 
-**What day0 uses it for.** Reading the team's handbook when the handbook lives
+**What Day0 uses it for.** Reading the team's handbook when the handbook lives
 in Notion. Day0 learns your systems, their access paths and the exact shapes of
 the actions it may take from those pages, so the pages are the input to almost
 everything else.
@@ -138,12 +151,12 @@ person present, and the connection secret you paste into `/documentation` is
 what it reads with.
 
 **When you need it.** Only when a documentation source is a Notion source
-pointed at day0's own server. Link it on `/documentation` as kind `mcp`, server
+pointed at Day0's own server. Link it on `/documentation` as kind `mcp`, server
 kind `Notion`, location `http://docs-notion-mcp:3000/mcp`.
 
 **When you do not.** A folder, a git repository or a list of URLs needs no
 component at all: the backend reads those itself. Nor do the other MCP server
-kinds, which reach a server you already run and day0 only dials.
+kinds, which reach a server you already run and Day0 only dials.
 
 **What it never sees.** Only the pages the Notion connection is shared with. In
 Notion you connect the integration to a parent page and nothing outside it is
@@ -171,11 +184,11 @@ is the gap in every other agent that claims to work with your tools.
 
 **Why this server.** Driving a browser from an agent needs a tool catalogue the
 agent can read and an isolated session per run. This is the standard driver that
-offers both: day0 reads its live catalogue during the probe rather than assuming
+offers both: Day0 reads its live catalogue during the probe rather than assuming
 tool names, and its isolated-session mode gives each run its own browser context,
 so no run inherits another's cookies or its signed-in page.
 
-**What day0 uses it for.** A `browser-driven` surface, which orientation
+**What Day0 uses it for.** A `browser-driven` surface, which orientation
 proposes only when a page documents a web UI and denies an API. The surface's
 allowlist is what a person needs to read a page and complete a form: open a
 page, read it, click, type, fill a form. Everything that turns a browser into a
@@ -204,10 +217,10 @@ is a refusal.
 ## `looker-tile` - the demonstration system
 
 **What it is.** A synthetic system with a web UI, a login, one editable figure
-and an audit line. It is not part of day0; it stands in for an enterprise's own
+and an audit line. It is not part of Day0; it stands in for an enterprise's own
 web app.
 
-**What day0 uses it for.** Nothing, in your installation. It exists so the
+**What Day0 uses it for.** Nothing, in your installation. It exists so the
 browser component can be demonstrated against something, and so the browser
 floor has a system to be tested against that nobody has to own.
 
@@ -218,7 +231,7 @@ thing, and this one would only be a fifth card nobody asked for.
 
 **What it never sees.** Anything outside its own container. It has no
 credentials of its own beyond the login its documentation page publishes, which
-is the point of the exercise: day0 discovers that login from the docs like any
+is the point of the exercise: Day0 discovers that login from the docs like any
 other credential.
 
 ---
@@ -230,7 +243,7 @@ review panes and the demonstration bed's revocation rung
 (`pnpm demo:bed offline-rung`), so that a self-provisioning round trip, and a
 revoked write being refused, can be proved without touching a real workspace.
 
-**What day0 uses it for.** Nothing in production. Reaching it at all requires a
+**What Day0 uses it for.** Nothing in production. Reaching it at all requires a
 development-only setting that is refused outside a local no-auth run.
 
 **When you need it.** Running the test suite's live proofs, or reviewing them.
@@ -250,7 +263,7 @@ signing keys, sign-in codes with PKCE and rotating refresh tokens for a fixed
 set of test people, so a customer-local bed can sign people in without an
 external identity provider.
 
-**What day0 uses it for.** Nothing in production. Anyone who reaches it signs
+**What Day0 uses it for.** Nothing in production. Anyone who reaches it signs
 in as anyone it lists, which is why it is never an issuer a real installation
 points at.
 
@@ -275,7 +288,7 @@ token). On a bed it answers under Linear's own names through
 `fake-linear/compose.bed.yml`, so a Linear path is proved without calling
 Linear.
 
-**What day0 uses it for.** Nothing in production. Anyone who reaches it acts as
+**What Day0 uses it for.** Nothing in production. Anyone who reaches it acts as
 anyone it lists, which is why it is never a Linear a real installation points
 at.
 
@@ -296,7 +309,7 @@ stops.
 **What it is.** The Convex dashboard: a web view of the backend's tables,
 functions and logs.
 
-**What day0 uses it for.** Nothing. It is for you, when you want to read a row
+**What Day0 uses it for.** Nothing. It is for you, when you want to read a row
 or a log line directly.
 
 **When you need it.** Debugging, and reading what a run actually stored.
@@ -323,13 +336,13 @@ file that does not match refuses to start, and the health check says so. It
 performs no hosted inference. Inference runs locally; first startup downloads
 pinned wheels and the verified snapshot.
 
-**What day0 uses it for.** Documentation pages at sync, HTTP and MCP provider
+**What Day0 uses it for.** Documentation pages at sync, HTTP and MCP provider
 outcomes (effect, reason and id), and the ticket record the planner reads go
 through the component. Other metadata and prompts use the synchronous
 structural floor; the export uses it with its policy row's personal-data
 grammar (an e-mail anywhere, a phone, a birth date or an address where it is
 unmistakable or labelled); even so, export is not a complete personal-data scrub. Before any of
-that, every boundary removes the exact values day0 itself stores for the owner:
+that, every boundary removes the exact values Day0 itself stores for the owner:
 the action that persists a page, an outcome, a grounding record or a run's
 output first decrypts the owner's credential list in memory (bounded, never
 persisted or logged) and removes each value literally, JSON-escaped and
@@ -395,7 +408,7 @@ have a 10-second deadline; a timeout
 fails documentation sync closed and marks provider evidence as limited redaction.
 The dashboard displays that limitation. Exact matching covers the credential
 supplied by the transport and every active credential stored for the owner;
-it does not cover a secret day0 never stored.
+it does not cover a secret Day0 never stored.
 
 ---
 
@@ -404,21 +417,21 @@ it does not cover a secret day0 never stored.
 **What it is.** Nango's free self-hosted edition (`nangohq/nango-server`,
 version 0.71.11 pinned by digest, Elastic License 2.0), with its PostgreSQL
 (`nango-db`) and Redis (`nango-redis`). The free edition is "API Auth" and
-"Proxy"; day0 uses the first. Measured on 2 October 2026: about 480 MiB at rest
+"Proxy"; Day0 uses the first. Measured on 2 October 2026: about 480 MiB at rest
 for the three services, 44 seconds to healthy on its first start (it migrates
 its database) and 13 seconds after, about 1.2 GB of images.
 
-**What day0 uses it for.** Keeping and refreshing the OAuth tokens of a
-documented-API system day0 has no issuer of its own for. Such a credential row
+**What Day0 uses it for.** Keeping and refreshing the OAuth tokens of a
+documented-API system Day0 has no issuer of its own for. Such a credential row
 holds only the Nango connection the token lives in, never the token; every time
 a rung, the probe or intake needs the token, the backend asks Nango, which
 refreshes it first when it is due (a client-credentials grant included), and
-day0 never caches the answer or asks for a refresh token. Slack, Linear and an
-MCP server's authorisation keep their tokens in day0's own store and never come
+Day0 never caches the answer or asks for a refresh token. Slack, Linear and an
+MCP server's authorisation keep their tokens in Day0's own store and never come
 here.
 
 **When you need it.** When a system on your list is reached through its API
-with OAuth tokens and day0 has no issuer for it: `pnpm convex:up --profile
+with OAuth tokens and Day0 has no issuer for it: `pnpm convex:up --profile
 token-store`, with `DAY0_NANGO_URL=http://nango-server:3003` in `.env.local`
 (`pnpm sync:env` pushes it). The three keys it needs are minted once by
 `pnpm dev:no-auth-key`, which every setup runs: `DAY0_NANGO_SECRET_KEY` (the key
@@ -448,11 +461,11 @@ nothing to Nango.
 `node:22-alpine` image, no dependencies) that holds Slack's Socket Mode
 connections: one WebSocket per employee Slack app that has an app-level token,
 dialled out from your network, so Slack can deliver a press of a decision
-request's **Approve** or **Reject** button without day0 opening anything to the
+request's **Approve** or **Reject** button without Day0 opening anything to the
 internet. Slack allows ten connections per app; the bridge holds one, and two
 for a moment while Slack refreshes it.
 
-**What day0 uses it for.** Decision buttons in the manager's Slack DM. The
+**What Day0 uses it for.** Decision buttons in the manager's Slack DM. The
 bridge acknowledges each press at once and hands it to the backend's internal
 route, `/slack-socket/press` on the site port, presenting
 `DAY0_SOCKET_BRIDGE_SECRET`; the backend decides it exactly as it decides a
@@ -492,5 +505,5 @@ the endpoint in `.env.local` instead. `sandbox` runs the local sandbox that
 verifies an authored skill before it becomes callable, and every real-mode
 setup starts it, because a skill that was never verified stays uncallable;
 `DAYTONA_API_KEY` replaces it with the hosted sandbox. Both are described where
-they are set up, in the repository README; neither is a way for day0 to reach
+they are set up, in the repository README; neither is a way for Day0 to reach
 one of your systems, which is what the components above are for.

@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { excerpt, SUMMARY_TEXT_LIMIT, summariseAction } from '../../../src/surfaces/summary';
+import {
+  excerpt,
+  OFFICE_THREAD_SUBJECTS,
+  officeWriteWords,
+  threadSubjectOf,
+  SUMMARY_TEXT_LIMIT,
+  summariseAction,
+} from '../../../src/surfaces/summary';
+import { OFFICE_ASKS, TEAM_ASKS } from '../../../src/work/office-asks';
 import type { SurfaceRecord } from '../../../src/surfaces/types';
 import type { MockAction } from '../../../src/work/types';
 
@@ -313,13 +321,17 @@ describe('the plain-language action line', (): void => {
         surfaces,
       ),
     ).toBe('http.request on Slack');
+    // Re-pinned (W17-R30): the office's own verbs are known, so they no longer fall back to
+    // "slack.postMessage on dm-manager" and "ticket.update" (the office's words, below).
     expect(
       summariseAction(
         { tool: 'slack.postMessage', args: { channelSlug: 'dm-manager', body: 'hi' } },
         surfaces,
       ),
-    ).toBe('slack.postMessage on dm-manager');
-    expect(summariseAction({ tool: 'ticket.update', args: {} }, surfaces)).toBe('ticket.update');
+    ).toBe('A message to you in Slack: "hi"');
+    expect(summariseAction({ tool: 'ticket.update', args: {} }, surfaces)).toBe(
+      'A change to a ticket',
+    );
   });
 
   it('keeps placeholders and headers out of the line', (): void => {
@@ -343,5 +355,92 @@ describe('the plain-language action line', (): void => {
     expect(line).toContain('Sam‹script›cod.exe');
     expect(line).not.toContain('<script>');
     expect(line).not.toContain('\u202E');
+  });
+});
+
+describe('the mock office’s writes in a manager’s words (W17-R30)', (): void => {
+  /** The hosted walk's rows: Lark's held writes and Pip's reply in Hana's thread. */
+  const post = (channelSlug: string, threadKey?: string): MockAction => ({
+    tool: 'slack.postMessage',
+    args: { channelSlug, ...(threadKey ? { threadKey } : {}), body: 'Logged the three deals.' },
+  });
+
+  it('says who a message is to, or which channel it is in, and the thread by what it is about', (): void => {
+    expect(officeWriteWords(post('dm-manager'))).toBe(
+      'A message to you in Slack: "Logged the three deals."',
+    );
+    expect(officeWriteWords(post('dm-priya'))).toBe(
+      'A message to Priya in Slack: "Logged the three deals."',
+    );
+    expect(officeWriteWords(post('office-asks', 'thread-double-charge'))).toBe(
+      'A message in #office-asks in Slack, in the thread about “Northwind’s double charge”: "Logged the three deals."',
+    );
+    // A thread the office did not seed is named as a thread, never by its key.
+    expect(officeWriteWords(post('revops', 'thread-made-up'))).toBe(
+      'A message in #revops in Slack, in a thread: "Logged the three deals."',
+    );
+  });
+
+  // W18-R21 (the wave 18 review, reader 6's probe): the thread key is the model's to choose, and
+  // a plain-object lookup read "constructor" as the object's own function, printed as the subject.
+  it('names a thread whose key is an object member’s name as a thread, never by what the lookup finds (W18-R21)', (): void => {
+    for (const key of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) {
+      expect(officeWriteWords(post('revops', key))).toBe(
+        'A message in #revops in Slack, in a thread: "Logged the three deals."',
+      );
+      expect(threadSubjectOf(key)).toBeUndefined();
+    }
+    expect(threadSubjectOf('thread-double-charge')).toBe('Northwind’s double charge');
+  });
+
+  it('names what every seeded ask’s thread is about, so no thread is drawn by its key', (): void => {
+    for (const ask of [...OFFICE_ASKS, ...TEAM_ASKS]) {
+      expect(OFFICE_THREAD_SUBJECTS[ask.threadKey], ask.threadKey).toMatch(/\S/);
+    }
+  });
+
+  it('draws a row by its tab and cells, a ticket by its id and state, a reply as one', (): void => {
+    expect(
+      officeWriteWords({
+        tool: 'spreadsheet.appendRow',
+        args: {
+          sheetSlug: 'q4-revenue-tracker',
+          tabName: 'closed-won',
+          cells: [
+            { header: 'Account', value: 'Beta Corp' },
+            { header: 'Amount', value: '' },
+          ],
+        },
+      }),
+    ).toBe('A new row on the spreadsheet’s “closed-won” tab: Account Beta Corp, Amount (blank)');
+    expect(
+      officeWriteWords({
+        tool: 'ticket.update',
+        args: { slug: 'REVOPS-204', status: 'in-progress', comment: 'On it.' },
+      }),
+    ).toBe('Ticket REVOPS-204 moved to in progress, with a comment: "On it."');
+    expect(
+      officeWriteWords({ tool: 'ticket.update', args: { slug: 'REVOPS-204', status: 'done' } }),
+    ).toBe('Ticket REVOPS-204 moved to done');
+    expect(
+      officeWriteWords({ tool: 'ticket.update', args: { slug: 'REVOPS-204', comment: 'On it.' } }),
+    ).toBe('A comment on ticket REVOPS-204: "On it."');
+    expect(
+      officeWriteWords({
+        tool: 'twitter.reply',
+        args: { tweetSlug: 'tweet-acme-feedback', body: 'Thanks for the note.' },
+      }),
+    ).toBe('A reply to a social mention: "Thanks for the note."');
+    expect(officeWriteWords({ tool: 'mcp.call', args: { surface: 'linear' } })).toBeUndefined();
+  });
+
+  it('escapes the office’s line for a Slack message as it does every other line', (): void => {
+    expect(
+      summariseAction(
+        { tool: 'slack.postMessage', args: { channelSlug: 'dm-manager', body: '<!here> done' } },
+        [],
+        { slackEscape: true },
+      ),
+    ).toBe('A message to you in Slack: "&lt;!here&gt; done"');
   });
 });

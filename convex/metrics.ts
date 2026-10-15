@@ -1,7 +1,7 @@
-import { ConvexError, v } from 'convex/values';
+import { ConvexError, getDocumentSize, v } from 'convex/values';
 import { internal } from './_generated/api';
-import type { Doc } from './_generated/dataModel';
-import { action, internalQuery, query, type QueryCtx } from './_generated/server';
+import type { Doc, Id } from './_generated/dataModel';
+import { action, internalQuery, query, type ActionCtx, type QueryCtx } from './_generated/server';
 import {
   actionIntent,
   isGateRefusal,
@@ -15,10 +15,11 @@ import { ledgerPhases } from '../src/work/reconciliation';
 import { finishedAnswerOf } from '../src/work/work-done';
 import type { MockAction } from '../src/work/types';
 import { assertOwnsAgent, getCallerOrThrow } from './ownership';
+import { FIGURES_READ_BY_PAGES, outputForFigures } from '../src/metrics/figures-output';
+import { EMPLOYEE_NOT_YOURS } from '../src/agent/employee-access';
 import { log } from '../src/lib/logger';
 import { isEventOf, isEventType, type EventType } from '../src/events/contract';
-import type { AgentMetrics, DecisionVia, OwnerMetrics, PilotFigures } from '../src/metrics/types';
-import { RETRIEVAL_RECALL } from '../src/metrics/retrieval-recall';
+import type { AgentMetrics, DecisionVia, OwnerMetrics } from '../src/metrics/types';
 import { addDays, agentZone, dayStart } from '../src/lib/zone';
 import { isEvaluationShapedAddress, normaliseManagerAddress } from '../src/agent/manager-address';
 import {
@@ -29,6 +30,21 @@ import {
   type AcceptedHandover,
   type TenureWindow,
 } from '../src/metrics/tenure';
+import {
+  companyMetricsOf,
+  summariseDecisions,
+  summarisePilot,
+  type DecisionTotals,
+  type EmployeeFigures,
+  type EmployeeRecords,
+  type PilotTotals,
+} from './companyFigures';
+
+/*
+ * The company's pooling (`companyMetricsOf`) and the summaries it shares with one employee's
+ * figures are a module below, `convex/companyFigures.ts` (wave 18, 18-s), which this one imports;
+ * the reads, the ledger walk, each employee's figures and the registered functions stay here.
+ */
 
 type UnknownRecord = Record<string, unknown>;
 export interface LedgerObservation {
@@ -63,19 +79,6 @@ function asIndexes(value: unknown): number[] {
 
 function asString(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined;
-}
-
-function latencySummary(values: readonly number[]): {
-  medianLatencyMs: number | null;
-  p90LatencyMs: number | null;
-} {
-  if (values.length === 0) return { medianLatencyMs: null, p90LatencyMs: null };
-  const sorted = [...values].sort((left, right) => left - right);
-  const middle = Math.floor(sorted.length / 2);
-  const medianLatencyMs =
-    sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
-  const p90LatencyMs = sorted[Math.max(0, Math.ceil(sorted.length * 0.9) - 1)];
-  return { medianLatencyMs, p90LatencyMs };
 }
 
 function runIdFromIdempotencyKey(key: unknown): string | null {
@@ -226,16 +229,6 @@ export function byWriteOrder(left: Doc<'events'>, right: Doc<'events'>): number 
     left._creationTime - right._creationTime ||
     (left._id < right._id ? -1 : left._id > right._id ? 1 : 0)
   );
-}
-
-interface DecisionTotals {
-  requested: number;
-  approved: number;
-  rejected: number;
-  partiallyApproved: number;
-  cancelled: number;
-  latencies: number[];
-  byVia: Record<DecisionVia, number[]>;
 }
 
 function decisionResult(event: Doc<'events'>):
@@ -456,24 +449,6 @@ function decisionTotals(
     }
   }
   return totals;
-}
-
-function summariseDecisions(totals: DecisionTotals): AgentMetrics['decisions'] {
-  const all = latencySummary(totals.latencies);
-  const dashboard = latencySummary(totals.byVia.dashboard);
-  const channel = latencySummary(totals.byVia.channel);
-  return {
-    requested: totals.requested,
-    approved: totals.approved,
-    rejected: totals.rejected,
-    partiallyApproved: totals.partiallyApproved,
-    cancelled: totals.cancelled,
-    ...all,
-    byVia: {
-      dashboard: { decided: totals.byVia.dashboard.length, ...dashboard },
-      channel: { decided: totals.byVia.channel.length, ...channel },
-    },
-  };
 }
 
 /**
@@ -739,37 +714,6 @@ export const TERMINAL_WORK_EVENTS: ReadonlySet<EventType> = new Set<EventType>([
   'work.actions-interrupted',
 ]);
 
-/** The raw lists behind the pilot figures, which a company figure pools before any median. */
-interface PilotTotals {
-  runs: number;
-  reused: number;
-  /** Of the reused runs, those of a skill adopted from another employee (A14). */
-  adopted: number;
-  toEnd: number[];
-  /** From the ask to the completion counted, of the items whose run answered done. */
-  toCompletion: number[];
-  /** The items whose completion counted answered partly done (RM23 (a)). */
-  partlyDone: number;
-  answered: number;
-  amended: number;
-  /**
-   * The reorientation cards opened (a joined trigger not again), approved and dismissed, and the
-   * cards deferred now: a card deferred and since opened again, decided or closed at a handover is
-   * not counted deferred (the v0.20.0 hosted walk's finding 5: "1 card: 0 approved, 1 dismissed,
-   * 1 deferred").
-   */
-  cards: { opened: number; approved: number; dismissed: number; deferred: number };
-  estimatedItems: number;
-  estimatedMinutes: number;
-  /** The items whose prompts carried a documentation selection, and their characters summed. */
-  retrievalItems: number;
-  retrievalChars: number;
-  /** Of those items, the ones a provider reported usage for, their characters and input tokens. */
-  tokenItems: number;
-  billedChars: number;
-  inputTokens: number;
-}
-
 /**
  * The retrieval figure's tokens half from the documentation each item's prompts carried and the
  * input tokens its model calls were billed (wave 14, 14-R): only items with a selection count.
@@ -791,26 +735,6 @@ function retrievalTotals(
     tokenItems: billed.length,
     billedChars: billed.reduce((total, item) => total + item.chars, 0),
     inputTokens: billed.reduce((total, item) => total + item.tokens, 0),
-  };
-}
-
-/**
- * The tokens half of the retrieval figure: over the items a provider reported usage for when any
- * did, so the characters and the tokens describe the same items; else the characters alone.
- */
-function retrievalTokens(totals: PilotTotals): PilotFigures['retrieval']['tokens'] {
-  if (totals.tokenItems > 0) {
-    return {
-      items: totals.tokenItems,
-      charsPerItem: totals.billedChars / totals.tokenItems,
-      inputTokensPerItem: totals.inputTokens / totals.tokenItems,
-    };
-  }
-  if (totals.retrievalItems === 0) return null;
-  return {
-    items: totals.retrievalItems,
-    charsPerItem: totals.retrievalChars / totals.retrievalItems,
-    inputTokensPerItem: null,
   };
 }
 
@@ -960,68 +884,6 @@ function pilotTotals(
   };
 }
 
-function summarisePilot(totals: PilotTotals): PilotFigures {
-  const completion = latencySummary(totals.toCompletion);
-  return {
-    skillReuse: {
-      runs: totals.runs,
-      reused: totals.reused,
-      adopted: totals.adopted,
-      rate: totals.runs > 0 ? totals.reused / totals.runs : null,
-    },
-    cycleTime: {
-      ended: totals.toEnd.length,
-      medianToEndMs: latencySummary(totals.toEnd).medianLatencyMs,
-      completed: totals.toCompletion.length,
-      partlyDone: totals.partlyDone,
-      medianToCompletionMs: completion.medianLatencyMs,
-      p90ToCompletionMs: completion.p90LatencyMs,
-    },
-    reorientation: {
-      cards: { ...totals.cards },
-      answered: totals.answered,
-      amended: totals.amended,
-      rate: totals.answered > 0 ? totals.amended / totals.answered : null,
-    },
-    hoursSaved: {
-      estimatedItems: totals.estimatedItems,
-      hours: totals.estimatedItems > 0 ? totals.estimatedMinutes / 60 : null,
-    },
-    retrieval: {
-      tokens: retrievalTokens(totals),
-      // The recall grades the selection, so it is shown only where a selection ran: real mode,
-      // which alone records one (W14-R6); the hosted mock office never meets the selector.
-      recall: totals.retrievalItems > 0 ? RETRIEVAL_RECALL : null,
-    },
-  };
-}
-
-function pooledPilot(rows: readonly PilotTotals[]): PilotTotals {
-  return {
-    runs: rows.reduce((total, row) => total + row.runs, 0),
-    reused: rows.reduce((total, row) => total + row.reused, 0),
-    adopted: rows.reduce((total, row) => total + row.adopted, 0),
-    toEnd: rows.flatMap((row) => row.toEnd),
-    toCompletion: rows.flatMap((row) => row.toCompletion),
-    partlyDone: rows.reduce((total, row) => total + row.partlyDone, 0),
-    answered: rows.reduce((total, row) => total + row.answered, 0),
-    amended: rows.reduce((total, row) => total + row.amended, 0),
-    cards: {
-      opened: rows.reduce((total, row) => total + row.cards.opened, 0),
-      approved: rows.reduce((total, row) => total + row.cards.approved, 0),
-      dismissed: rows.reduce((total, row) => total + row.cards.dismissed, 0),
-      deferred: rows.reduce((total, row) => total + row.cards.deferred, 0),
-    },
-    estimatedItems: rows.reduce((total, row) => total + row.estimatedItems, 0),
-    estimatedMinutes: rows.reduce((total, row) => total + row.estimatedMinutes, 0),
-    retrievalItems: rows.reduce((total, row) => total + row.retrievalItems, 0),
-    retrievalChars: rows.reduce((total, row) => total + row.retrievalChars, 0),
-    tokenItems: rows.reduce((total, row) => total + row.tokenItems, 0),
-    billedChars: rows.reduce((total, row) => total + row.billedChars, 0),
-    inputTokens: rows.reduce((total, row) => total + row.inputTokens, 0),
-  };
-}
-
 /**
  * One agent's summary together with the raw decision latencies behind it,
  * which a company figure pools before taking its median.
@@ -1116,16 +978,6 @@ export function computeAgentMetrics(
  * (`forOwnerByPages`; wave 17, RM33 (a), F-2), and the recompute reads every trace it is given.
  */
 export const MAX_COMPANY_EMPLOYEES = 20;
-
-/** One employee's durable records, as `forAgent` reads them or a trace carries them. */
-export interface EmployeeRecords {
-  agent: Pick<Doc<'agents'>, '_id' | 'name' | 'createdAt'>;
-  events: readonly Doc<'events'>[];
-  workItems: readonly Doc<'workItems'>[];
-  charters: readonly Doc<'charters'>[];
-  /** The employee's surfaces, which tell the manager DM from other writes; none reads every automatic write as a write. */
-  surfaces?: readonly Doc<'surfaces'>[];
-}
 
 /** What the company selection reads of an agent, from a row or from a trace. */
 export type CompanyAgent = Pick<Doc<'agents'>, '_id' | '_creationTime' | 'userId'>;
@@ -1229,44 +1081,6 @@ export function selectCompanyEmployees<Agent extends CompanyAgent>(
   };
 }
 
-function pooledActions(rows: readonly AgentMetrics['actions'][]): AgentMetrics['actions'] {
-  const sum = (pick: (row: AgentMetrics['actions']) => number): number =>
-    rows.reduce((total, row) => total + pick(row), 0);
-  const blocked = rows.flatMap((row) =>
-    row.blockedAfterRevocation === null ? [] : [row.blockedAfterRevocation],
-  );
-  const firstBlocks = rows.flatMap((row) =>
-    row.firstBlockAfterRevocationMs === null ? [] : [row.firstBlockAfterRevocationMs],
-  );
-  return {
-    autoApplied: sum((row) => row.autoApplied),
-    automatic: {
-      reads: sum((row) => row.automatic.reads),
-      managerMessages: sum((row) => row.automatic.managerMessages),
-      writes: sum((row) => row.automatic.writes),
-    },
-    sessionRestores: sum((row) => row.sessionRestores),
-    held: sum((row) => row.held),
-    approved: sum((row) => row.approved),
-    rejected: sum((row) => row.rejected),
-    refused: sum((row) => row.refused),
-    // Null while no employee's scope was ever revoked, as for one employee.
-    blockedAfterRevocation: blocked.length > 0 ? blocked.reduce((total, n) => total + n, 0) : null,
-    firstBlockAfterRevocationMs: firstBlocks.length > 0 ? Math.min(...firstBlocks) : null,
-  };
-}
-
-/**
- * One employee's figures with the raw lists behind them, which a company figure pools before it
- * takes any median: what one page of the company's figures answers for each employee it read.
- */
-export interface EmployeeFigures {
-  readonly agent: EmployeeRecords['agent'];
-  readonly metrics: AgentMetrics;
-  readonly decisions: DecisionTotals;
-  readonly pilot: PilotTotals;
-}
-
 /**
  * One employee's figures from its records, with the lists a company figure pools.
  *
@@ -1296,97 +1110,307 @@ export function computeCompanyMetrics(
   return companyMetricsOf(records.map(employeeFiguresOf), setAside);
 }
 
-/**
- * The company row pooled from each employee's figures, beside the employees' own: the one pooling
- * the query, the read by pages and the recompute all take, so they cannot disagree.
- *
- * @param figures - Each employee's figures with the lists behind them, in deploy order.
- * @param setAside - What the selection left out, carried into the result.
+/*
+ * An employee's records, read within a room of bytes (wave 18, 18-F; C1). They were collected
+ * whole, so an employee whose runs' outputs weighed past what one function may read (17-FW's bed:
+ * 24 finished items of 900 KB) failed every read of its figures, its page's and the company's.
+ * Each read now holds a room: never more rows a take than fit what is left of it at a document's
+ * largest size, so the bound holds whatever a row weighs (as the work list's `listReader` does).
+ * A subscribed read past its room says so; the figures are then read by pages from an action
+ * (`forAgentByPages`, and `forOwnerByPages` for an employee a page of the company could not hold).
+ * The room counts the takes and the documents as well as the bytes (W18-R1, the wave 18 review):
+ * twelve thousand light events read eight rows a take ran past the operations one function may
+ * perform on the review's bed, where no byte bound was near.
  */
-export function companyMetricsOf(
-  figures: readonly EmployeeFigures[],
-  setAside: Pick<OwnerMetrics, 'excludedAgents' | 'omittedEmployees'>,
-): OwnerMetrics {
-  const metrics = figures.map((figure) => figure.metrics);
-  const decisions: DecisionTotals = {
-    requested: 0,
-    approved: 0,
-    rejected: 0,
-    partiallyApproved: 0,
-    cancelled: 0,
-    latencies: [],
-    byVia: { dashboard: [], channel: [] },
-  };
-  for (const { decisions: own } of figures) {
-    decisions.requested += own.requested;
-    decisions.approved += own.approved;
-    decisions.rejected += own.rejected;
-    decisions.partiallyApproved += own.partiallyApproved;
-    decisions.cancelled += own.cancelled;
-    decisions.latencies.push(...own.latencies);
-    decisions.byVia.dashboard.push(...own.byVia.dashboard);
-    decisions.byVia.channel.push(...own.byVia.channel);
+
+/** The most bytes one document holds (Convex's limit), as `ROW_BYTES_AT_MOST` in `workLoop.ts`. */
+const DOCUMENT_BYTES_AT_MOST = 1024 * 1024;
+
+/** The most rows one take of a table of an employee's records reads, however light the rows. */
+const RECORDS_TAKE_AT_MOST = 200;
+
+/**
+ * Bytes of records the subscribed reads hold at most (`forAgent` for its employee, `forOwner`
+ * across its twenty, a page of the company's figures across its five): half of what one function
+ * may read, which leaves the rest of the read its own.
+ */
+const FIGURES_READ_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Takes the subscribed reads make at most, over every employee they read: about a thousand index
+ * ranges, where the review's bed refused a read at about seventeen hundred ("timed out performing
+ * too many system operations", W18-R1) and Convex allows 4,096.
+ */
+const FIGURES_READ_TAKES = 1_000;
+
+/** Documents the subscribed reads hold at most: half of the 32,000 one function may read. */
+const FIGURES_READ_ROWS = 16_000;
+
+/**
+ * Bytes of records one page of an employee's records read by pages holds at most: its answer is
+ * the action's to hold, with each output cut to what the figures read.
+ */
+const RECORDS_PAGE_BYTES = 4 * 1024 * 1024;
+
+/** The most rows one page of an employee's records read by pages answers. */
+const RECORDS_PAGE_ROWS = 1_000;
+
+/** The tables an employee's figures are read from, in the order a read walks them. */
+const RECORD_TABLES = ['events', 'workItems', 'charters', 'surfaces'] as const;
+
+/** One table of an employee's records. */
+type RecordTable = (typeof RECORD_TABLES)[number];
+
+/** One employee's rows of each table its figures read. */
+interface RecordRows {
+  readonly events: Doc<'events'>[];
+  readonly workItems: Doc<'workItems'>[];
+  readonly charters: Doc<'charters'>[];
+  readonly surfaces: Doc<'surfaces'>[];
+}
+
+/** No rows yet. */
+function noRows(): RecordRows {
+  return { events: [], workItems: [], charters: [], surfaces: [] };
+}
+
+/** The bytes a read may still hold, shared by the reads that draw on it. */
+export interface ReadRoom {
+  left: number;
+}
+
+/** What a read of employees' records may still spend: bytes, takes and documents (W18-R1). */
+interface RecordsRoom extends ReadRoom {
+  takes: number;
+  rows: number;
+}
+
+/** The room of a subscribed read of the figures, shared by every employee it reads. */
+function figuresRoom(): RecordsRoom {
+  return { left: FIGURES_READ_BYTES, takes: FIGURES_READ_TAKES, rows: FIGURES_READ_ROWS };
+}
+
+/**
+ * Rows of one table of an employee's records, in creation order, created after a moment, at most
+ * a count: each table's `by_agent` index.
+ */
+async function takeRecords(
+  ctx: QueryCtx,
+  table: RecordTable,
+  agentId: Id<'agents'>,
+  after: number | null,
+  count: number,
+): Promise<ReadonlyArray<RecordRows[RecordTable][number]>> {
+  switch (table) {
+    case 'events':
+      return await ctx.db
+        .query('events')
+        .withIndex('by_agent', (q) =>
+          after === null
+            ? q.eq('agentId', agentId)
+            : q.eq('agentId', agentId).gt('_creationTime', after),
+        )
+        .take(count);
+    case 'workItems':
+      return await ctx.db
+        .query('workItems')
+        .withIndex('by_agent', (q) =>
+          after === null
+            ? q.eq('agentId', agentId)
+            : q.eq('agentId', agentId).gt('_creationTime', after),
+        )
+        .take(count);
+    case 'charters':
+      return await ctx.db
+        .query('charters')
+        .withIndex('by_agent', (q) =>
+          after === null
+            ? q.eq('agentId', agentId)
+            : q.eq('agentId', agentId).gt('_creationTime', after),
+        )
+        .take(count);
+    case 'surfaces':
+      return await ctx.db
+        .query('surfaces')
+        .withIndex('by_agent', (q) =>
+          after === null
+            ? q.eq('agentId', agentId)
+            : q.eq('agentId', agentId).gt('_creationTime', after),
+        )
+        .take(count);
+    default: {
+      const unknown: never = table;
+      throw new Error(`no records table ${String(unknown)}`);
+    }
   }
-  const sum = (pick: (row: AgentMetrics) => number): number =>
-    metrics.reduce((total, row) => total + pick(row), 0);
-  const charterTimes = metrics.map((row) => row.charter.timeToFirstApprovedMs);
-  const approvedTimes = charterTimes.filter((time): time is number => time !== null);
-  const complete = sum((row) => row.auditTrail.complete);
-  const total = sum((row) => row.auditTrail.total);
+}
+
+/**
+ * Every row of an employee's records that fits a room, table after table: a take is never more
+ * rows than fit what is left at a document's largest size, so the read ends within the room and
+ * one row past it at most; nor is a take made once the room's takes or documents are spent
+ * (W18-R1), so an employee of many light rows is read by pages as a heavy one is.
+ *
+ * @param ctx - Query context.
+ * @param agentId - The employee.
+ * @param room - The bytes, takes and documents the read may spend, drawn on as it reads.
+ * @returns The rows, and whether the room ran out before the last table's end.
+ */
+async function recordsWithin(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+  room: RecordsRoom,
+): Promise<{ readonly rows: RecordRows; readonly whole: boolean }> {
+  const rows = noRows();
+  for (const table of RECORD_TABLES) {
+    let after: number | null = null;
+    for (;;) {
+      const count = Math.min(
+        RECORDS_TAKE_AT_MOST,
+        Math.max(1, Math.floor(room.left / DOCUMENT_BYTES_AT_MOST)),
+      );
+      if (room.left <= 0 || room.takes <= 0 || room.rows < count) return { rows, whole: false };
+      room.takes -= 1;
+      const taken = await takeRecords(ctx, table, agentId, after, count);
+      room.rows -= taken.length;
+      for (const row of taken) room.left -= getDocumentSize(row);
+      (rows[table] as Array<RecordRows[RecordTable][number]>).push(...taken);
+      if (taken.length < count) break;
+      after = taken.at(-1)?._creationTime ?? null;
+    }
+  }
+  return { rows, whole: true };
+}
+
+/** A row's run output cut to what the figures read ({@link outputForFigures}). */
+function withFiguresOutput<Row extends { readonly output?: unknown }>(row: Row): Row {
+  return row.output === undefined ? row : { ...row, output: outputForFigures(row.output) };
+}
+
+/** An event with its payload's run output cut to what the figures read. */
+function eventForFigures(event: Doc<'events'>): Doc<'events'> {
+  const payload = asRecord(event.payload);
+  return payload?.output === undefined
+    ? event
+    : ({
+        ...event,
+        payload: { ...payload, output: outputForFigures(payload.output) },
+      } as Doc<'events'>);
+}
+
+/** Where a read of one employee's records by pages stands: the table, and the backend's cursor in it. */
+interface RecordsCursor {
+  readonly table: RecordTable;
+  readonly cursor: string | null;
+}
+
+/** One page of an employee's records read by pages, each output cut, and where the next starts. */
+interface RecordsPage {
+  readonly table: RecordTable;
+  readonly rows: ReadonlyArray<RecordRows[RecordTable][number]>;
+  readonly next: RecordsCursor | null;
+}
+
+/** The validator of a records cursor, which the action carries from page to page. */
+const recordsCursorValidator = v.object({
+  table: v.union(...RECORD_TABLES.map((table) => v.literal(table))),
+  cursor: v.union(v.string(), v.null()),
+});
+
+/**
+ * One page of one table of an employee's records, in creation order, bounded in bytes by the
+ * backend's own read (one paginated read a page): the rows with their outputs cut to what the
+ * figures read, and where the next page starts.
+ */
+async function recordsPage(
+  ctx: QueryCtx,
+  agentId: Id<'agents'>,
+  at: RecordsCursor,
+): Promise<RecordsPage> {
+  const paging = {
+    cursor: at.cursor,
+    numItems: RECORDS_PAGE_ROWS,
+    maximumBytesRead: RECORDS_PAGE_BYTES,
+  };
+  const read = await (async (): Promise<{
+    rows: ReadonlyArray<RecordRows[RecordTable][number]>;
+    isDone: boolean;
+    continueCursor: string;
+  }> => {
+    switch (at.table) {
+      case 'events': {
+        const page = await ctx.db
+          .query('events')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .paginate(paging);
+        return { ...page, rows: page.page.map(eventForFigures) };
+      }
+      case 'workItems': {
+        const page = await ctx.db
+          .query('workItems')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .paginate(paging);
+        return { ...page, rows: page.page.map(withFiguresOutput) };
+      }
+      case 'charters': {
+        const page = await ctx.db
+          .query('charters')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .paginate(paging);
+        return { ...page, rows: page.page };
+      }
+      case 'surfaces': {
+        const page = await ctx.db
+          .query('surfaces')
+          .withIndex('by_agent', (q) => q.eq('agentId', agentId))
+          .paginate(paging);
+        return { ...page, rows: page.page };
+      }
+      default: {
+        const unknown: never = at.table;
+        throw new Error(`no records table ${String(unknown)}`);
+      }
+    }
+  })();
+  const following = RECORD_TABLES[RECORD_TABLES.indexOf(at.table) + 1];
   return {
-    employees: figures.map(({ agent, metrics: own }) => ({
-      agentId: agent._id,
-      name: agent.name,
-      deployedAt: agent.createdAt,
-      metrics: own,
-    })),
-    company: {
-      employees: figures.length,
-      charter: {
-        timesToFirstApprovedMs: charterTimes,
-        medianTimeToFirstApprovedMs: latencySummary(approvedTimes).medianLatencyMs,
-        approvedEmployees: approvedTimes.length,
-      },
-      decisions: summariseDecisions(decisions),
-      actions: pooledActions(metrics.map((row) => row.actions)),
-      surfaces: {
-        approved: sum((row) => row.surfaces.approved),
-        rejected: sum((row) => row.surfaces.rejected),
-        absent: sum((row) => row.surfaces.absent),
-      },
-      skills: {
-        approved: sum((row) => row.skills.approved),
-        rejected: sum((row) => row.skills.rejected),
-      },
-      autonomyChanges: sum((row) => row.autonomyChanges),
-      auditTrail: { complete, total, fraction: total > 0 ? complete / total : null },
-      pilot: summarisePilot(pooledPilot(figures.map((figure) => figure.pilot))),
-    },
-    excludedAgents: setAside.excludedAgents,
-    omittedEmployees: setAside.omittedEmployees,
+    table: at.table,
+    rows: read.rows,
+    next: !read.isDone
+      ? { table: at.table, cursor: read.continueCursor }
+      : following === undefined
+        ? null
+        : { table: following, cursor: null },
   };
 }
 
-async function readEmployeeRecords(ctx: QueryCtx, agent: Doc<'agents'>): Promise<EmployeeRecords> {
-  const [events, workItems, charters, surfaces] = await Promise.all([
-    ctx.db
-      .query('events')
-      .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-      .collect(),
-    ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', agent._id))
-      .collect(),
-    ctx.db
-      .query('charters')
-      .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-      .collect(),
-    ctx.db
-      .query('surfaces')
-      .withIndex('by_agent', (q) => q.eq('agentId', agent._id))
-      .collect(),
-  ]);
-  return { agent, events, workItems, charters, surfaces };
+/** What an action that reads an employee's records by pages runs: one page from a cursor. */
+type RecordsPageCall = (at: RecordsCursor) => Promise<RecordsPage>;
+
+/**
+ * Every row of an employee's records read page by page from an action, each output cut to what
+ * the figures read, so no one function holds more than a page.
+ *
+ * @param agent - The employee, as the records name it.
+ * @param page - One page from a cursor, run under the caller's identity.
+ * @throws Error when a page answers a cursor the walk already read, which would read for ever.
+ */
+async function recordsByPages(
+  agent: EmployeeRecords['agent'],
+  page: RecordsPageCall,
+): Promise<EmployeeRecords> {
+  const rows = noRows();
+  const asked = new Set<string>();
+  let at: RecordsCursor | null = { table: RECORD_TABLES[0], cursor: null };
+  while (at !== null) {
+    const printed = JSON.stringify(at);
+    if (asked.has(printed)) throw new Error(`an employee’s ${at.table} answered a cursor twice`);
+    asked.add(printed);
+    const read: RecordsPage = await page(at);
+    (rows[read.table] as Array<RecordRows[RecordTable][number]>).push(...read.rows);
+    at = read.next;
+  }
+  return { agent, ...rows };
 }
 
 /**
@@ -1551,10 +1575,46 @@ export function dayRefusal(day: string): string | undefined {
 }
 
 /**
+ * The figures `forAgent` and `forAgentByPages` answer, from the employee's records: its decisions
+ * counted within the spans the reader held it ({@link figuresForCurrentManager}), and with `day`
+ * that day's figures in the employee's zone beside them, under `today`.
+ *
+ * @param agent - The employee, which the reader owns.
+ * @param records - Its whole records.
+ * @param transfers - Its accepted requests.
+ * @param day - The employee's own today as its page reads it, already checked.
+ */
+function agentFiguresOf(
+  agent: Doc<'agents'>,
+  records: EmployeeRecords,
+  transfers: readonly Doc<'managerTransfers'>[],
+  day: string | undefined,
+): AgentMetrics {
+  // The guard has proved the caller owns the employee, so the row's owner is the reader.
+  const handovers = handoversFromTransfers(transfers);
+  const figures = figuresForCurrentManager(records, handovers, agent.userId);
+  if (day === undefined) return figures;
+  // The day's decisions are the reader's as the whole record's are: within the spans it held
+  // the employee, or the whole record where the rows name no span of its own.
+  const held =
+    agent.userId === undefined ? [] : tenureWindowsOf(agent.userId, agent.userId, handovers);
+  const windows = held.length > 0 ? held : [WHOLE_HISTORY];
+  const ofDay = computeAgentMetrics(
+    ...recordsArgs(recordsOfDay(recordsWithinTenure(records, windows), day, agentZone(agent))),
+  );
+  return { ...figures, today: { day, decisions: ofDay.decisions, actions: ofDay.actions } };
+}
+
+/**
  * Public, the employee's owner only (`assertOwnsAgent`): the employee's supervision figures, its
  * decisions counted within the spans the caller held it ({@link figuresForCurrentManager}). With
  * `day`, the employee's own today as its page reads it (16-F), the figures of that day in the
- * employee's zone beside them, under `today`. Writes nothing.
+ * employee's zone beside them, under `today`. Its records are read within one room
+ * ({@link figuresRoom}: bytes, takes and documents), so a page can subscribe to it: an employee
+ * whose records pass that is refused in {@link FIGURES_READ_BY_PAGES}'s words, and the page reads its figures by pages
+ * (`forAgentByPages`; C1, wave 18). Writes nothing.
+ *
+ * @throws ConvexError when `day` is no day, or the employee's records pass the read's room.
  */
 export const forAgent = query({
   args: { agentId: v.id('agents'), day: v.optional(v.string()) },
@@ -1564,23 +1624,88 @@ export const forAgent = query({
     const { day } = args;
     const refusal = day === undefined ? undefined : dayRefusal(day);
     if (refusal !== undefined) throw new ConvexError(refusal);
-    const [records, transfers] = await Promise.all([
-      readEmployeeRecords(ctx, agent),
+    const [read, transfers] = await Promise.all([
+      recordsWithin(ctx, agent._id, figuresRoom()),
       acceptedTransfersOf(ctx, agent._id),
     ]);
-    // The guard has proved the caller owns the employee, so the row's owner is the reader.
-    const handovers = handoversFromTransfers(transfers);
-    const figures = figuresForCurrentManager(records, handovers, agent.userId);
-    if (day === undefined) return figures;
-    // The day's decisions are the reader's as the whole record's are: within the spans it held
-    // the employee, or the whole record where the rows name no span of its own.
-    const held =
-      agent.userId === undefined ? [] : tenureWindowsOf(agent.userId, agent.userId, handovers);
-    const windows = held.length > 0 ? held : [WHOLE_HISTORY];
-    const ofDay = computeAgentMetrics(
-      ...recordsArgs(recordsOfDay(recordsWithinTenure(records, windows), day, agentZone(agent))),
-    );
-    return { ...figures, today: { day, decisions: ofDay.decisions, actions: ofDay.actions } };
+    if (!read.whole) throw new ConvexError(FIGURES_READ_BY_PAGES);
+    return agentFiguresOf(agent, { agent, ...read.rows }, transfers, day);
+  },
+});
+
+/**
+ * The employee and its accepted requests, for `forAgentByPages`, to its owner only
+ * (`assertOwnsAgent`). Internal; the action runs it under the caller's identity. Reads; writes
+ * nothing.
+ */
+export const agentFiguresHead = internalQuery({
+  args: { agentId: v.id('agents') },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ agent: Doc<'agents'>; transfers: Doc<'managerTransfers'>[] }> => {
+    const agent = await assertOwnsAgent(ctx, args.agentId);
+    return { agent, transfers: await acceptedTransfersOf(ctx, agent._id) };
+  },
+});
+
+/**
+ * One page of an employee's records for its figures read by pages, each run output cut to what
+ * the figures read ({@link recordsPage}): to the caller who holds the employee now or handed it
+ * over (an employee whose spans the company's figures count), refused in
+ * {@link EMPLOYEE_NOT_YOURS}'s words to anyone else. Internal; `forAgentByPages` and
+ * `forOwnerByPages` run it under the caller's identity. Reads; writes nothing.
+ */
+export const employeeRecordsPage = internalQuery({
+  args: { agentId: v.id('agents'), at: recordsCursorValidator },
+  handler: async (ctx, args): Promise<RecordsPage> => {
+    const { ownerKey } = await getCallerOrThrow(ctx);
+    const agent = await ctx.db.get(args.agentId);
+    if (agent === null) throw new ConvexError(EMPLOYEE_NOT_YOURS);
+    if (agent.userId !== ownerKey) {
+      const handovers = handoversFromTransfers(await acceptedTransfersOf(ctx, agent._id));
+      if (tenureWindowsOf(ownerKey, agent.userId, handovers).length === 0) {
+        throw new ConvexError(EMPLOYEE_NOT_YOURS);
+      }
+    }
+    return await recordsPage(ctx, agent._id, args.at);
+  },
+});
+
+/** An employee's records read by pages from an action, under the caller's identity. */
+async function recordsOfEmployeeByPages(
+  ctx: ActionCtx,
+  agent: EmployeeRecords['agent'],
+): Promise<EmployeeRecords> {
+  return await recordsByPages(
+    agent,
+    async (at) =>
+      await ctx.runQuery(internal.metrics.employeeRecordsPage, { agentId: agent._id, at }),
+  );
+}
+
+/**
+ * Public, the employee's owner only (`assertOwnsAgent`, in the head it reads first): what
+ * `forAgent` answers, for an employee whose records pass the room one read of them holds (C1;
+ * wave 18, 18-F): the records are read page by page, each page a function of its own with its run
+ * outputs cut to what the figures read, and the figures are the same. The employee page asks for
+ * it once `forAgent` refuses in {@link FIGURES_READ_BY_PAGES}'s words. Each page is a read of its
+ * own, so the answer is no one instant's. Writes nothing.
+ *
+ * @throws ConvexError when the caller does not own the employee, or `day` is no day.
+ */
+export const forAgentByPages = action({
+  args: { agentId: v.id('agents'), day: v.optional(v.string()) },
+  handler: async (ctx, args): Promise<AgentMetrics> => {
+    const { agent, transfers } = await ctx.runQuery(internal.metrics.agentFiguresHead, {
+      agentId: args.agentId,
+    });
+    // The guard first, in the head: a caller it refuses learns nothing of the arguments (12-G).
+    const { day } = args;
+    const refusal = day === undefined ? undefined : dayRefusal(day);
+    if (refusal !== undefined) throw new ConvexError(refusal);
+    const records = await recordsOfEmployeeByPages(ctx, agent);
+    return agentFiguresOf(agent, records, transfers, day);
   },
 });
 
@@ -1746,9 +1871,10 @@ async function heldEmployees(
  * Public, any signed-in caller; reads only the caller's own: the supervision figures of
  * the caller's company, each employee's own figures and the company row, each
  * employee counted within the spans the caller held it (D12 (a)). Bounded, so a card can
- * subscribe to it: it covers the most recent `MAX_COMPANY_EMPLOYEES` employees and says how many
- * it left out (`omittedEmployees`); `forOwnerByPages` reads them all. Writes
- * nothing. A caller with no identity is refused (`getCallerOrThrow`, 12-G).
+ * subscribe to it: it covers the most recent `MAX_COMPANY_EMPLOYEES` employees, their records
+ * within one room ({@link figuresRoom}; an employee whose records do not fit what is left is left
+ * out too: C1, wave 18; W18-R1), and says how many it left out (`omittedEmployees`); `forOwnerByPages` reads
+ * them all. Writes nothing. A caller with no identity is refused (`getCallerOrThrow`, 12-G).
  */
 export const forOwner = query({
   args: {},
@@ -1762,19 +1888,29 @@ export const forOwner = query({
       handovers,
       MAX_COMPANY_EMPLOYEES,
     );
-    const records = await Promise.all(
-      selection.employees.map(async (agent) =>
-        recordsWithinTenure(
-          await readEmployeeRecords(ctx, agent),
-          selection.tenures.get(agent._id) ?? [],
-        ),
-      ),
-    );
-    return computeCompanyMetrics(records, selection);
+    // One room for the twenty, read one after another: an employee whose records do not fit
+    // what is left is left out and counted so, and the home reads every one by pages (C1).
+    const room = figuresRoom();
+    const records: EmployeeRecords[] = [];
+    let unread = 0;
+    for (const agent of selection.employees) {
+      const read = await recordsWithin(ctx, agent._id, room);
+      if (!read.whole) {
+        unread += 1;
+        continue;
+      }
+      records.push(
+        recordsWithinTenure({ agent, ...read.rows }, selection.tenures.get(agent._id) ?? []),
+      );
+    }
+    return computeCompanyMetrics(records, {
+      excludedAgents: selection.excludedAgents,
+      omittedEmployees: selection.omittedEmployees + unread,
+    });
   },
 });
 
-/** How many employees' whole records one page of the company's figures reads. */
+/** How many employees one page of the company's figures reads, within one room. */
 const COMPANY_PAGE_EMPLOYEES = 5;
 
 /**
@@ -1789,10 +1925,21 @@ interface FiguresCursor {
   readonly cursor: string | null;
 }
 
+/** An employee whose records a page of the company's figures could not hold, to read by pages. */
+interface EmployeeToReadByPages {
+  readonly agent: EmployeeRecords['agent'];
+  /** The row's creation time, which orders the whole company. */
+  readonly creationTime: number;
+  /** The spans the caller held it, which its figures count. */
+  readonly windows: TenureWindow[];
+}
+
 /** One page of the company's figures: each employee read, in the order read, and what follows. */
 interface OwnerFiguresPage {
   /** Each employee's figures, with the row's creation time, which orders the whole company. */
   readonly employees: ReadonlyArray<EmployeeFigures & { readonly creationTime: number }>;
+  /** The employees whose records the page's room could not hold (C1, wave 18): read by pages. */
+  readonly byPages: readonly EmployeeToReadByPages[];
   /** The evaluation agents and baseline arms the page passed over. */
   readonly excludedAgents: number;
   /** Where the next page starts, or null after the last. */
@@ -1821,27 +1968,55 @@ function figuresCursorAfter(
 }
 
 /**
- * One employee's figures within the spans an owner held it (D12 (a)), or undefined for an
- * employee the owner never held.
+ * One employee's figures within the spans an owner held it (D12 (a)), its records read within
+ * what is left of the page's room; the employee to read by pages where they do not fit (C1); or
+ * undefined for an employee the owner never held.
  */
 async function employeeFiguresWithin(
   ctx: QueryCtx,
   owner: string,
   agent: Doc<'agents'>,
-): Promise<OwnerFiguresPage['employees'][number] | undefined> {
+  room: RecordsRoom,
+): Promise<
+  | { readonly figures: OwnerFiguresPage['employees'][number] }
+  | { readonly byPages: EmployeeToReadByPages }
+  | undefined
+> {
   const handovers = handoversFromTransfers(await acceptedTransfersOf(ctx, agent._id));
   const windows = tenureWindowsOf(owner, agent.userId, handovers);
   if (windows.length === 0) return undefined;
-  const records = recordsWithinTenure(await readEmployeeRecords(ctx, agent), windows);
-  return { ...employeeFiguresOf(records), creationTime: agent._creationTime };
+  const read = await recordsWithin(ctx, agent._id, room);
+  if (!read.whole) return { byPages: { agent, creationTime: agent._creationTime, windows } };
+  const records = recordsWithinTenure({ agent, ...read.rows }, windows);
+  return { figures: { ...employeeFiguresOf(records), creationTime: agent._creationTime } };
+}
+
+/** What a page's employees came to: those read, and those to read by pages. */
+async function pageOfEmployees(
+  ctx: QueryCtx,
+  owner: string,
+  agents: readonly Doc<'agents'>[],
+): Promise<Pick<OwnerFiguresPage, 'employees' | 'byPages'>> {
+  // One room for the page's employees, read one after another (C1, wave 18).
+  const room = figuresRoom();
+  const employees: Array<OwnerFiguresPage['employees'][number]> = [];
+  const byPages: EmployeeToReadByPages[] = [];
+  for (const agent of agents) {
+    const read = await employeeFiguresWithin(ctx, owner, agent, room);
+    if (read === undefined) continue;
+    if ('figures' in read) employees.push(read.figures);
+    else byPages.push(read.byPages);
+  }
+  return { employees, byPages };
 }
 
 /**
  * One page of the figures of the caller's company (wave 17, 17-F; RM33 (a), F-2): at most
- * `COMPANY_PAGE_EMPLOYEES` employees' whole records, each counted within the spans the caller
- * held it, with the lists a company figure pools. The employees the caller holds now come first,
- * in deploy order; then those it handed over that still exist, an employee it holds again left to
- * the first walk. Internal; `forOwnerByPages` runs it under the caller's identity, and every
+ * `COMPANY_PAGE_EMPLOYEES` employees' records within one room, each counted within the spans the
+ * caller held it, with the lists a company figure pools; an employee whose records do not fit
+ * what is left of the room is named for the action to read by pages (C1, wave 18). The employees
+ * the caller holds now come first, in deploy order; then those it handed over that still exist,
+ * an employee it holds again left to the first walk. Internal; `forOwnerByPages` runs it under the caller's identity, and every
  * read is keyed by the caller's own owner key. Reads; writes nothing.
  */
 export const ownerFiguresPage = internalQuery({
@@ -1856,11 +2031,8 @@ export const ownerFiguresPage = internalQuery({
         .withIndex('by_userId', (q) => q.eq('userId', ownerKey))
         .paginate(paging);
       const company = read.page.filter((agent) => !isEvaluationAgent(agent));
-      const figures = await Promise.all(
-        company.map(async (agent) => await employeeFiguresWithin(ctx, ownerKey, agent)),
-      );
       return {
-        employees: figures.filter((employee) => employee !== undefined),
+        ...(await pageOfEmployees(ctx, ownerKey, company)),
         excludedAgents: read.page.length - company.length,
         next: figuresCursorAfter(at, read),
       };
@@ -1875,17 +2047,13 @@ export const ownerFiguresPage = internalQuery({
         async (agentId) => await ctx.db.get(agentId),
       ),
     );
-    const figures = await Promise.all(
-      departed
-        // Retired since, held again by the caller (the first walk's), or never the company's.
-        .filter(
-          (agent): agent is Doc<'agents'> =>
-            agent !== null && agent.userId !== ownerKey && !isEvaluationAgent(agent),
-        )
-        .map(async (agent) => await employeeFiguresWithin(ctx, ownerKey, agent)),
+    // Retired since, held again by the caller (the first walk's), or never the company's.
+    const company = departed.filter(
+      (agent): agent is Doc<'agents'> =>
+        agent !== null && agent.userId !== ownerKey && !isEvaluationAgent(agent),
     );
     return {
-      employees: figures.filter((employee) => employee !== undefined),
+      ...(await pageOfEmployees(ctx, ownerKey, company)),
       excludedAgents: 0,
       next: figuresCursorAfter(at, read),
     };
@@ -1915,6 +2083,12 @@ export const forOwnerByPages = action({
         cursor,
       });
       for (const employee of page.employees) read.set(employee.agent._id, employee);
+      // An employee the page could not hold is read by pages here, each page a read of its own
+      // with its outputs cut to what the figures read (C1, wave 18).
+      for (const { agent, creationTime, windows } of page.byPages) {
+        const records = recordsWithinTenure(await recordsOfEmployeeByPages(ctx, agent), windows);
+        read.set(agent._id, { ...employeeFiguresOf(records), creationTime });
+      }
       excludedAgents += page.excludedAgents;
       cursor = page.next;
     } while (cursor !== null);

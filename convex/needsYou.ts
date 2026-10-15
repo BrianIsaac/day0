@@ -30,10 +30,11 @@ import { actionsOf, verdictList } from './workLedger';
  * The needs-you projection (the wave 14 review's D-6, the standard's 9.2): everything one employee
  * waits on the manager for, each entry dated by when it began to wait, and the inbox's one order;
  * moved out of `convex/work.ts` unchanged. The registered inbox reads (`work:needsYou`,
- * `work:needsYouForAgent`) and their `returns` validators stay in `convex/work.ts` and build on the
- * entry validator here, which `NeedsYouEntry` is inferred from. This module sits below
- * `convex/work.ts`: `convex/work.ts` imports it and it never imports `./work`, so the move closes no
- * import cycle. It registers no function.
+ * `work:needsYouForAgent`) stay registered in `convex/work.ts`; their bodies and `returns`
+ * validators are in `convex/workLists.ts` (wave 18, 18-s) and build on the entry validator here,
+ * which `NeedsYouEntry` is inferred from. This module sits below `convex/work.ts`: `convex/work.ts`
+ * imports it and it never imports `./work`, so the move closes no import cycle. It registers no
+ * function.
  */
 
 /**
@@ -41,20 +42,56 @@ import { actionsOf, verdictList } from './workLedger';
  * work-in-progress cap, so for them the bound is never reached; parked rows
  * hold no slot, so for them it is the most the inbox lists.
  */
-const NEEDS_YOU_STATE_READ_LIMIT = 100;
+export const NEEDS_YOU_STATE_READ_LIMIT = 100;
 
 /**
  * Bound on the stopped-row read, the roster's. Nothing caps the failed rows an
  * employee has, so the newest are read: a failure the manager has not seen yet
  * is never pushed out by old ones.
  */
-const NEEDS_YOU_STOPPED_READ_LIMIT = 25;
+export const NEEDS_YOU_STOPPED_READ_LIMIT = 25;
 
 /** Bound on an employee's surfaces read, newest first, for the ones proposed to the manager. */
 const NEEDS_YOU_SURFACE_READ_LIMIT = 100;
 
 /** Bound on the questions read for one plan. */
 const NEEDS_YOU_QUESTION_READ_LIMIT = 20;
+
+/** One employee's rows in one state, newest first, to a bound. */
+export type StateRows = (
+  state: Doc<'workItems'>['state'],
+  limit: number,
+) => Promise<Doc<'workItems'>[]>;
+
+/**
+ * One employee's rows by state, each state read once a transaction at each bound, however many
+ * readers ask for it: the roster counts the very rows its inbox entries list, and a row read twice
+ * is charged twice against the transaction's bytes (18-W's F1, at the joins: eleven parked rows of
+ * 900 KB, read by both, took the roster's page past its read). The roster reads at this module's
+ * bounds ({@link NEEDS_YOU_STATE_READ_LIMIT}, {@link NEEDS_YOU_STOPPED_READ_LIMIT}), so the two
+ * share each read.
+ *
+ * @param ctx - Query context.
+ * @param agentId - The employee.
+ * @returns The reader; the rows it answers are shared, never to be changed in place.
+ */
+export function stateRowsOnce(ctx: QueryCtx, agentId: Id<'agents'>): StateRows {
+  const reads = new Map<string, Promise<Doc<'workItems'>[]>>();
+  return async (state, limit) => {
+    const key = `${state}:${limit}`;
+    let read = reads.get(key);
+    if (read === undefined) {
+      read = ctx.db
+        .query('workItems')
+        .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
+        // Newest first: past a bound, what the manager has not seen yet is what is kept.
+        .order('desc')
+        .take(limit);
+      reads.set(key, read);
+    }
+    return await read;
+  };
+}
 
 /**
  * How many of an employee's events of one type the inbox reads back to find
@@ -364,21 +401,18 @@ async function connectReadyCards(
  * @param ctx - Query context.
  * @param agentId - The employee.
  * @param now - The instant an authoring claim is judged against.
+ * @param rows - The employee's rows by state ({@link stateRowsOnce}).
  */
 async function waitingRowsOf(
   ctx: QueryCtx,
   agentId: Id<'agents'>,
   now: number,
+  rows: StateRows,
 ): Promise<WaitingRows> {
   const rowsIn = async (
     state: Doc<'workItems'>['state'],
     limit: number = NEEDS_YOU_STATE_READ_LIMIT,
-  ): Promise<Doc<'workItems'>[]> =>
-    await ctx.db
-      .query('workItems')
-      .withIndex('by_agent_state', (q) => q.eq('agentId', agentId).eq('state', state))
-      .order('desc')
-      .take(limit);
+  ): Promise<Doc<'workItems'>[]> => await rows(state, limit);
   const [charter, planRows, heldRows, deferredRows, skillRows, failedRows, surfaces] =
     await Promise.all([
       ctx.db
@@ -449,13 +483,15 @@ async function oneToOneWaitingSince(ctx: QueryCtx, agent: Doc<'agents'>): Promis
  * @param ctx - Query context.
  * @param agent - The employee.
  * @param now - The instant an authoring claim is judged against.
+ * @param rows - The employee's rows by state, shared with a reader that counts them (the roster).
  */
 export async function needsYouOfEmployee(
   ctx: QueryCtx,
   agent: Doc<'agents'>,
   now: number,
+  rows: StateRows = stateRowsOnce(ctx, agent._id),
 ): Promise<NeedsYouEntry[]> {
-  const waiting = await waitingRowsOf(ctx, agent._id, now);
+  const waiting = await waitingRowsOf(ctx, agent._id, now, rows);
   // Only a row that entered its wait before the stamp existed is dated by reading events.
   const unstamped = (row: Doc<'workItems'>): boolean => row.waitingSince === undefined;
   const [

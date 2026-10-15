@@ -261,7 +261,7 @@ export async function standingConflictsOn(
     standing.push(found.conflict);
     // Each standing conflict cost its two page rows whole: past the bound the rest are left
     // untagged and unasked by this read, and the record says the read was in part.
-    bytes += rowBytes(found.from) + rowBytes(found.to);
+    bytes += pageRowBytes(found.from) + pageRowBytes(found.to);
     if (bytes > bytesMost) {
       log.warn('conflicts read in part', {
         reason: 'the conflicts on the blocks carried pass one read’s byte bound',
@@ -291,7 +291,7 @@ export const CONFLICT_WALK_LOOKUPS = 2_400;
 export const CONFLICT_WALK_BYTES = 8 * 1024 * 1024;
 
 /** An upper bound on the bytes reading a page's row takes. */
-function rowBytes(page: Doc<'docPages'>): number {
+export function pageRowBytes(page: Doc<'docPages'>): number {
   return 3 * (page.markdown.length + page.title.length);
 }
 
@@ -301,6 +301,8 @@ function rowBytes(page: Doc<'docPages'>): number {
  * `most`, when it has made {@link CONFLICT_WALK_LOOKUPS} block lookups or drawn `bytes` of page
  * rows, or at the end of the owner's confirmed conflicts; `next` is where a later read goes on
  * from, and null only at the end, so nothing behind a run of settled conflicts is lost for good.
+ * It is the last conflict the walk drew, or its stop point where it drew none: a reader that holds
+ * it keeps it while the settled conflicts past the last card change (the review's minor 5).
  *
  * @param ctx - The reader's query context.
  * @param userId - The owner's key.
@@ -322,19 +324,26 @@ export async function standingConflictsFrom(
   let lookups = 0;
   let bytes = 0;
   let before = walk.before;
+  // Where a later walk goes on from: the last conflict drawn, or, where none was, the stop
+  // point. The settled conflicts walked past the last card are walked again, so a change among
+  // them moves no cursor a reader holds (the review's minor 5).
+  const stop = (): { standing: StandingWithPages[]; next: number | null } => ({
+    standing,
+    next: standing.at(-1)?.relation._creationTime ?? before ?? null,
+  });
   for (;;) {
     const page = await confirmedConflicts(ctx, userId, before);
     for (const relation of page) {
-      if (standing.length >= walk.most) return { standing, next: before ?? null };
+      if (standing.length >= walk.most) return stop();
       if (walk.reads === undefined || walk.reads(relation)) {
         // Each block is looked up under both pages (`disagreementOf`).
         lookups += 2 * conflictBlocks(relation).length;
-        if (lookups > CONFLICT_WALK_LOOKUPS) return { standing, next: before ?? null };
+        if (lookups > CONFLICT_WALK_LOOKUPS) return stop();
         const found = await standingWithPages(ctx, relation);
         if (found !== undefined) {
-          bytes += rowBytes(found.from) + rowBytes(found.to);
+          bytes += pageRowBytes(found.from) + pageRowBytes(found.to);
           // The rows that pass the bound are read already; the next walk begins with them.
-          if (bytes > bytesMost && standing.length > 0) return { standing, next: before ?? null };
+          if (bytes > bytesMost && standing.length > 0) return stop();
           standing.push(found);
         }
       }
@@ -500,6 +509,18 @@ async function planBlocks(
     pages.push({ sourceId: block.sourceId, ref: block.pageRef });
   }
   return { hashes, pages, blockIds };
+}
+
+/**
+ * Whether reading the conflicts a plan rests on walks the whole mirror (its selection failed and
+ * the planner read every page): such a read may make {@link CONFLICT_WALK_LOOKUPS} lookups, so a
+ * caller reading many plans in one transaction counts it (W17-R13, `docRelations.askConfirmed`).
+ */
+export async function planReadsWholeMirror(
+  ctx: QueryCtx,
+  row: Pick<Doc<'workItems'>, '_id' | 'agentId' | 'plan' | 'selectedBlocks'>,
+): Promise<boolean> {
+  return (await planBlocks(ctx, row)) === 'fell-back';
 }
 
 /**

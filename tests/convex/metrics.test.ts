@@ -13,8 +13,19 @@ import type { OwnerMetrics } from '../../src/metrics/types';
 import { RETRIEVAL_RECALL } from '../../src/metrics/retrieval-recall';
 import schema from '../../convex/schema';
 import { allConvexModules } from './all-modules';
+import * as metricsModule from '../../convex/metrics';
+import { registeredIn } from './registered-functions';
 import { MANAGER_ADDRESS, managerIdentity } from './fakes/manager-identity';
 import { guardRefusal } from './fakes/anonymous-caller';
+import {
+  HEAVY_ITEMS,
+  HEAVY_NOTES,
+  LIGHT_EVENTS,
+  seedLightHistory,
+  seedWorkedEmployee,
+} from './fakes/heavy-employee';
+import { FIGURES_READ_BY_PAGES } from '../../src/metrics/figures-output';
+import { EMPLOYEE_NOT_YOURS } from '../../src/agent/employee-access';
 import {
   WALK_EMPLOYEES,
   type WalkEmployee,
@@ -3082,4 +3093,111 @@ describe('today in the employee’s zone (16-F)', (): void => {
     const lastCounted = await owner.query(api.metrics.forAgent, { agentId, day: '9999-12-30' });
     expect(lastCounted.today?.day).toBe('9999-12-30');
   });
+});
+
+describe('the functions convex/metrics.ts registers', (): void => {
+  // The move of the company's pooling into `convex/companyFigures.ts` (wave 18, 18-s; S-1) moves
+  // no registered function: each `api.metrics.*` and `internal.metrics.*` path is a string the
+  // app, the command and the paged read hold. The list as `v0.21.0` registered it, with the three
+  // wave 18's 18-F adds for an employee's figures read by pages (C1).
+  it('are the ones it registered at v0.21.0, each of the same kind and visibility, and 18-F’s three', (): void => {
+    expect(registeredIn(metricsModule)).toEqual([
+      'agentFiguresHead internal query',
+      'employeeRecordsPage internal query',
+      'forAgent public query',
+      'forAgentByPages public action',
+      'forOwner public query',
+      'forOwnerByPages public action',
+      'ownerFiguresPage internal query',
+    ]);
+  });
+});
+
+/*
+ * C1 (17-FW's bed, the wave 17 review's; wave 18, 18-F): an employee whose records pass what one
+ * function may read. 17-FW's `items.py heavy` shape (24 finished items of 900 KB), with each
+ * completion's event carrying the same output as the completing write stores it, under
+ * convex-test's transaction limits; its twin holds the same rows with empty notes.
+ */
+describe('an employee whose records pass the read bound (C1, wave 18, 18-F)', (): void => {
+  /** A harness that holds every function to Convex's limits on one transaction. */
+  const limited = (): ReturnType<typeof convexTest> =>
+    convexTest({ schema, modules: allConvexModules(), transactionLimits: true });
+
+  it('draws its figures, read by pages, the figures its light twin draws in one read', async (): Promise<void> => {
+    const harness = limited();
+    const heavy = await seedWorkedEmployee(harness, 'Aiko', HEAVY_NOTES);
+    const twin = await seedWorkedEmployee(harness, 'Aiko', '');
+    const owner = harness.withIdentity(OWNER);
+
+    // The subscribed read keeps its bound and says the figures are read by pages.
+    await expect(owner.query(api.metrics.forAgent, { agentId: heavy })).rejects.toMatchObject({
+      data: FIGURES_READ_BY_PAGES,
+    });
+    const read = await owner.action(api.metrics.forAgentByPages, { agentId: heavy });
+    const expected = await owner.query(api.metrics.forAgent, { agentId: twin });
+    expect(read).toEqual(expected);
+    expect(read.decisions.approved).toBe(HEAVY_ITEMS);
+    // The employee's own day, as the rail reads it.
+    const day = '2026-10-13';
+    await expect(
+      owner.action(api.metrics.forAgentByPages, { agentId: heavy, day }),
+    ).resolves.toEqual(await owner.query(api.metrics.forAgent, { agentId: twin, day }));
+  });
+
+  it('refuses the paged figures to a caller who is not the owner, and to one with no identity', async (): Promise<void> => {
+    const harness = limited();
+    const heavy = await seedWorkedEmployee(harness, 'Aiko', HEAVY_NOTES);
+    await expect(
+      harness
+        .withIdentity(managerIdentity('stranger'))
+        .action(api.metrics.forAgentByPages, { agentId: heavy }),
+    ).rejects.toMatchObject({ data: EMPLOYEE_NOT_YOURS });
+    await expect(
+      harness.action(api.metrics.forAgentByPages, { agentId: heavy }),
+    ).rejects.toMatchObject(await guardRefusal());
+  });
+
+  it('counts it in the company’s figures read by pages, where the bounded read leaves it out and answers', async (): Promise<void> => {
+    const harness = limited();
+    const heavy = await seedWorkedEmployee(harness, 'Aiko', HEAVY_NOTES);
+    await seedWorkedEmployee(harness, 'Mateo', '');
+    const owner = harness.withIdentity(OWNER);
+
+    const bounded = await owner.query(api.metrics.forOwner, {});
+    expect(bounded.omittedEmployees).toBeGreaterThanOrEqual(1);
+    const every = await owner.action(api.metrics.forOwnerByPages, {});
+    expect(every.employees.map((row) => row.name)).toEqual(['Aiko', 'Mateo']);
+    const aiko = every.employees.find((row) => row.agentId === heavy);
+    const mateo = every.employees.find((row) => row.name === 'Mateo');
+    expect(aiko?.metrics).toEqual(mateo?.metrics);
+    expect(every.company.decisions.approved).toBe(HEAVY_ITEMS * 2);
+    expect(every.omittedEmployees).toBe(0);
+  });
+
+  // W18-R1 (the wave 18 review's bed 1, reader 5's probe): twelve thousand light events read eight
+  // rows a take ran past the operations one function may perform, so the subscribed reads died
+  // and held the employee's page blank; the read now stops at its takes and documents, and says so.
+  it('reads an employee of twelve thousand light events by pages, where the subscribed reads stop at their takes and say so (W18-R1)', async (): Promise<void> => {
+    const harness = limited();
+    const busy = await seedWorkedEmployee(harness, 'Priya', '');
+    await seedLightHistory(harness, busy);
+    await seedWorkedEmployee(harness, 'Mateo', '');
+    const owner = harness.withIdentity(OWNER);
+
+    await expect(owner.query(api.metrics.forAgent, { agentId: busy })).rejects.toMatchObject({
+      data: FIGURES_READ_BY_PAGES,
+    });
+    const read = await owner.action(api.metrics.forAgentByPages, { agentId: busy });
+    expect(read.decisions.approved).toBe(HEAVY_ITEMS);
+
+    const bounded = await owner.query(api.metrics.forOwner, {});
+    expect(bounded.omittedEmployees).toBeGreaterThanOrEqual(1);
+    expect(bounded.employees.map((row) => row.name)).not.toContain('Priya');
+    const every = await owner.action(api.metrics.forOwnerByPages, {});
+    expect(every.employees.map((row) => row.name)).toEqual(['Priya', 'Mateo']);
+    expect(every.company.decisions.approved).toBe(HEAVY_ITEMS * 2);
+    expect(every.omittedEmployees).toBe(0);
+    expect(LIGHT_EVENTS).toBe(12_000);
+  }, 240_000);
 });

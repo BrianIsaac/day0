@@ -17,12 +17,14 @@ describe('skill-parts', (): void => {
     expect(plainSkillName({ name: 'refresh', description: '   ' })).toBe('refresh');
   });
 
-  it('draws each scope as a code chip after its word, and nothing for a skill that needs none', (): void => {
+  // Re-pinned (W17-R30): the scopes were drawn as `system:verb` code chips ("needs boss:message
+  // ticket:read ticket:write" on the hosted walk); they are said as an employee's access is.
+  it('says the access a skill needs in words after its lead, and nothing for a skill that needs none', (): void => {
     const html = renderToStaticMarkup(
-      <ScopeChips scopes={['linear:read', 'linear:write']} lead="needs" />,
+      <ScopeChips scopes={['boss:message', 'ticket:read', 'ticket:write']} lead="needs:" />,
     );
-    expect(html.match(/<code[^>]*>linear:(read|write)<\/code>/g)).toHaveLength(2);
-    expect(html).toMatch(/^<span>needs /);
+    expect(html).toBe('<span>needs: messages to you; reading and writing tickets</span>');
+    expect(html).not.toContain('<code');
     expect(renderToStaticMarkup(<ScopeChips scopes={[]} lead="needs" />)).toBe('');
     expect(renderToStaticMarkup(<ScopeChips lead="needs" />)).toBe('');
   });

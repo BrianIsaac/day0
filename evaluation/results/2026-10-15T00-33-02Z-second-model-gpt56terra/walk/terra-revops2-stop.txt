@@ -1,0 +1,6 @@
+REVOPS-2 state=failed
+skip: stopped: 3 approved plan step(s) remained blocked: step 1 (Applied ledger row 0 proves that the manager DM was posted, but it contains no Slack read establishing the manager DM channel identifier as required by this plan step.); step 2 (The applied ledger contains the approval-request DM only and no literal manager approval for the Linear audit comment.); step 3 (The applied ledger contains no literal manager approval and no posted audit comment, so the required preceding comment and approval condition are not evidenced.)
+  action 0: http.request   | {"channel":"D_DAY0_MANAGER","text":"Draft for REVOPS-2: audit comment: \"Work done: The Q3 accrual review is complete. Evidence read: Sam’s ticket request. Unknowns: supporting review evidence was not supplied.\" Proposed transition: Done. Risk: supporting review evidence was not supplied. Please approve this exact comment and transition."} | applied: {"actionClass": "manager-dm", "authority": "standing", "effect": "HTTP 200 \u00b7 {\"ok\":true,\"channel\":\"D_DAY0_MANAGER\",\"ts\":\"1787817600.000002\",\"message\":{\"ts\":\"1787817600.000002\"}}",
+  notes: "The applied ledger lacks the Slack read specified by plan step 1 and any literal manager approval, so no Linear write can be emitted."
+  workDone: "partial"
+retryFeedback: None | managerFeedback: None

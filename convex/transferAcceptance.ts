@@ -12,12 +12,8 @@ import { internal } from './_generated/api';
 import { assertNamedInTransfer } from './ownership';
 import { charterAtHandover, discardUnapprovedCharter, renderIdentityForManager } from './charters';
 import { appendEvent, eventsOfType } from './eventLog';
-import {
-  carriesReportingLine,
-  charterClausesWhere,
-  moveCardsToOwner,
-  openCard,
-} from './reorientation';
+import { charterClausesWhere, moveCardsToOwner, openCard } from './reorientation';
+import { carriesReportingLine } from './reorientationJudgementInput';
 import {
   assertKeepable,
   boundariesOf,

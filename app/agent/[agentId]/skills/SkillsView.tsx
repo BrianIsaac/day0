@@ -56,7 +56,7 @@ export function SkillsView() {
   // neither list above.
   const notYetWritten = useQuery(api.skillControls.notYetWritten, { agentId });
   const adoptedSources = useQuery(api.skillVersions.adoptedSources, { agentId });
-  const workItems = useQuery(api.work.listForAgent, { agentId });
+  const workItems = useQuery(api.work.listForAgent, { agentId })?.items;
   const itemTitles = useMemo(
     (): Map<string, string> => new Map((workItems ?? []).map((item) => [item._id, item.title])),
     [workItems],

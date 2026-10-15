@@ -163,6 +163,9 @@ describe('the live feed labels', (): void => {
     expect(held({ reason: 'approved-by-predecessor' })).toBe(
       'plan held for you: approved by your predecessor; approve it again',
     );
+    expect(held({ reason: 'held-through-change', reorientationId: 'r1', summary: 'Ines' })).toBe(
+      'plan held for you: the reorientation card’s change does not affect it, so it is asked again',
+    );
     expect(held({ reason: 'a reason from a later build' })).toBe(
       'plan held for you: it waits for your decision',
     );
@@ -917,7 +920,7 @@ describe('the live feed of a close Day0 held and left for its card (12-H, R-12D-
         type: 'agreement.refused',
         payload: { agreementId: 'a1', everyEmployee: true, reason: 'every-employee-too-many' },
       }),
-    ).toBe('working agreement not in effect for every employee: you have more than 50 employees');
+    ).toBe('working agreement not in effect for every employee: you have more than 60 employees');
     expect(
       eventLabel({
         type: 'agreement.refused',

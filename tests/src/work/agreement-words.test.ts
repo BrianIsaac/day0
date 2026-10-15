@@ -14,6 +14,10 @@ import {
   sourceWords,
   checkStale,
   checkUnavailableLine,
+  checkOwedLine,
+  EVERY_EMPLOYEE_TOO_MANY,
+  HOLD_PAST_THE_CHECK,
+  uncheckedForEmployee,
 } from '../../../src/work/agreement-words';
 import { CHECK_STALE_MS } from '../../../src/work/agreement-vocabulary';
 import { AGREEMENT_SOURCE_TYPES } from '../../../src/work/agreement-vocabulary';
@@ -69,7 +73,7 @@ describe('what the cards say of a working agreement', (): void => {
     const tooMany = { reason: 'every-employee-too-many' as const };
     expect(refusalSentence(tooMany, 'Priya', 'charter')).toBe(
       // Re-taken (found on the 15-FX bed): the row outlives the count, so it says when that was.
-      'Not in effect for every employee: Day0 checks an agreement for every employee only while you have 50 employees or fewer, and you had more when you kept it. You can keep it for a single employee instead.',
+      'Not in effect for every employee: Day0 checks an agreement for every employee only while you have 60 employees or fewer, and you had more when you kept it. You can keep it for a single employee instead.',
     );
     expect(refusalSentence(tooMany, 'Priya', 'work')).toBe(
       refusalSentence(tooMany, 'Priya', 'charter'),
@@ -82,7 +86,7 @@ describe('what the cards say of a working agreement', (): void => {
     // Re-taken (15-FX): a hold is also written when the charter's check could not be had, and it
     // lifts once the check can be, so the row says what is true of both and what happens next.
     expect(refusalSentence(held, 'Ines', 'charter')).toBe(
-      "Not in effect for Ines: Day0 has not checked it against Ines's charter, and it checks an agreement for every employee only while you have 50 employees or fewer. It stays in effect for your other employees.",
+      "Not in effect for Ines: Day0 has not checked it against Ines's charter, and it checks an agreement for every employee only while you have 60 employees or fewer. It stays in effect for your other employees.",
     );
     // Re-pinned for W15-R37: the sweep checks a hold within half an hour, which the line omitted.
     expect(refusalSentence({ ...held, checkable: true }, 'Ines', 'charter')).toBe(
@@ -100,7 +104,7 @@ describe('what the cards say of a working agreement', (): void => {
       "Not in effect for Ines: Day0 checked it against Ines's charter twice and the two checks disagreed. One found that it widens the work the charter gives Ines; the other allowed it. It stays in effect for your other employees. Check now checks it twice again: it ends for every employee only if both checks refuse it.",
     );
     expect(refusalSentence(disputed, 'Ines', 'charter')).toBe(
-      "Not in effect for Ines: Day0 checked it against Ines's charter twice and the two checks disagreed. One found that it widens the work the charter gives Ines; the other allowed it. It stays in effect for your other employees. Day0 checks an agreement for every employee only while you have 50 employees or fewer.",
+      "Not in effect for Ines: Day0 checked it against Ines's charter twice and the two checks disagreed. One found that it widens the work the charter gives Ines; the other allowed it. It stays in effect for your other employees. Day0 checks an agreement for every employee only while you have 60 employees or fewer.",
     );
     expect(
       refusalSentence(
@@ -175,6 +179,20 @@ describe('what the cards say of a working agreement', (): void => {
     for (const source of AGREEMENT_SOURCE_TYPES) expect(sourceWords(source)).not.toBe('');
     expect(keepNoteHint('Priya')).toBe(
       'Your answer above becomes a working agreement for Priya once Day0 checks it against the charter; it is then on the Charter tab, where you can edit or retire it.',
+    );
+  });
+});
+
+// W17-R23 with D-5 (a): the check reads sixty employees, and every sentence that names the bound
+// says so.
+describe('the bound of the check in the four agreement sentences (D-5 (a))', (): void => {
+  it('says sixty in each sentence that names the employees the check reads', (): void => {
+    const bound = 'only while you have 60 employees or fewer';
+    expect(EVERY_EMPLOYEE_TOO_MANY).toContain(bound);
+    expect(uncheckedForEmployee('Ines', false)).toContain(bound);
+    expect(checkOwedLine('Ines', '3 Oct 2026, 09:00', false)).toContain(bound);
+    expect(HOLD_PAST_THE_CHECK).toBe(
+      'Day0 checks an agreement for every employee only while you have 60 employees or fewer.',
     );
   });
 });

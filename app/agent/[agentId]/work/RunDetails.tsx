@@ -15,7 +15,7 @@ import {
 import { type ManagerFeedback, managerFeedbackLabel } from '@/work/manager-feedback';
 import { useAgentZone, clockTimeWithSeconds, clockTime } from '../../../components/time';
 import { Disclosure } from '../../../components/Disclosure';
-import { describeAction, reviewPayload } from '@/surfaces/policy';
+import { describeAction, isSurfaceTool, reviewPayload } from '@/surfaces/policy';
 import { isWithheldForAnswer, planObligations, transitionWithheld } from '@/work/obligations';
 import { innermostReason, withheldInWords } from '@/work/withheld-words';
 import {
@@ -693,19 +693,25 @@ export function ProviderReconciliationControl({
   const all = entries.length > 0 && questions.every((entry) => answers.has(entryKey(entry)));
   const answer = (key: string, value: ReconciliationAnswer): void =>
     setAnswers((current) => new Map(current).set(key, value));
+  // A run whose writes all went to the mock office has no provider to check, so the checklist
+  // names none and keeps no ledger key for its support (W17-R30: "Provider reconciliation
+  // required" in an office that has no provider). A list with no entry says what it always said.
+  const onProvider = entries.length === 0 || entries.some((entry) => isSurfaceTool(entry.tool));
   return (
     <div className="grid gap-2 rounded-lg border border-[var(--color-warn-line)] bg-[var(--color-warn-soft)] px-3.5 py-3">
-      <p className="text-[15px] font-medium text-[var(--color-warn)]">
-        {reconciliation ? 'Provider state reconciled' : 'Provider reconciliation required'}
-      </p>
+      {onProvider ? (
+        <p className="text-[15px] font-medium text-[var(--color-warn)]">
+          {reconciliation ? 'Provider state reconciled' : 'Provider reconciliation required'}
+        </p>
+      ) : null}
       {reconciliation ? null : (
         <p className="text-[13px] text-[var(--color-fg-2)]">
           {askedAgain
             ? 'You confirmed this run as a whole before Day0 asked about each write, so each is asked again. '
             : null}
           {questions.length > 0
-            ? 'Check each write whose outcome is unknown on the provider before a retry, and say whether it landed or was not sent: a retry never sends again a write you say landed, nor one Day0 recorded as landed.'
-            : 'Each write below landed, as Day0 recorded it from the provider: a retry never sends one again. Confirm to open Retry.'}
+            ? `Check each write whose outcome is unknown ${onProvider ? 'on the provider' : 'in the office'} before a retry, and say whether it landed or was not sent: a retry never sends again a write you say landed, nor one Day0 recorded as landed.`
+            : `Each write below landed, as Day0 recorded it ${onProvider ? 'from the provider' : 'in the office'}: a retry never sends one again. Confirm to open Retry.`}
         </p>
       )}
       {entries.length > 0 ? (
@@ -741,13 +747,14 @@ export function ProviderReconciliationControl({
               </span>
             );
             // Outside the legend, which takes phrasing content only.
-            const ledgerKey = entry.idempotencyKey ? (
-              <Disclosure summary="Ledger key (for support)">
-                <span className="font-mono text-[13px] break-all text-[var(--color-muted)]">
-                  {entry.idempotencyKey}
-                </span>
-              </Disclosure>
-            ) : null;
+            const ledgerKey =
+              onProvider && entry.idempotencyKey ? (
+                <Disclosure summary="Ledger key (for support)">
+                  <span className="font-mono text-[13px] break-all text-[var(--color-muted)]">
+                    {entry.idempotencyKey}
+                  </span>
+                </Disclosure>
+              ) : null;
             if (reconciliation || !asked(entry)) {
               return (
                 <li key={key} className="min-w-0">
@@ -825,7 +832,7 @@ export function ProviderReconciliationControl({
               )
             }
           >
-            Confirm reconciliation
+            {onProvider ? 'Confirm reconciliation' : 'Confirm'}
           </Button>
           {questions.length > 0 ? (
             <span id={`${group}-answered`} className="text-[13px] text-[var(--color-fg-2)]">

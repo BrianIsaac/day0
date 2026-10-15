@@ -182,13 +182,62 @@ describe('a charter’s check of an agreement for every employee, judged twice (
     expect(seen).toHaveLength(1);
   });
 
-  it('judges a refusal a second time, with the same prompt, and refuses only when both judgements refuse', async (): Promise<void> => {
+  it('judges a refusal a second time and refuses only when both judgements refuse', async (): Promise<void> => {
     const { call, seen } = scripted(['widens-scope', 'widens-scope']);
     expect(await checkAgainstCharter(STATEMENT, { charters: ines, known: [] }, call)).toMatchObject(
       { outcome: 'refused', statement: STATEMENT, refusal: { reason: 'widens-scope' } },
     );
     expect(seen).toHaveLength(2);
-    expect(seen[1]).toBe(seen[0]);
+  });
+
+  // D-8 (a) (W17-R22): the second judgement asked the byte-identical prompt, so a provider that
+  // answers one prompt alike always agreed with itself and one refusal ended the agreement for
+  // every employee. The second asks with the charter's clauses in reverse order.
+  it('asks the second judgement with the charter’s clauses in reverse order, numbered as it reads them (D-8 (a))', async (): Promise<void> => {
+    const { call, seen } = scripted(['widens-scope', 'widens-scope']);
+    const twoEach = [
+      {
+        name: 'Ines',
+        willDo: runThrough.willDo,
+        willNotDo: ['Post to public Slack channels.', 'Email customers directly.'],
+      },
+    ];
+    await checkAgainstCharter(STATEMENT, { charters: twoEach, known: [] }, call);
+    expect(seen[1]).not.toBe(seen[0]);
+    expect(seen[0]).toContain(
+      'Will do: Handle owned, prioritized Linear tickets in the Q3 close project. | Draft replies to asks in #revops-asks.',
+    );
+    expect(seen[0]).toContain(
+      '  [1] Post to public Slack channels.\n  [2] Email customers directly.',
+    );
+    expect(seen[1]).toContain(
+      'Will do: Draft replies to asks in #revops-asks. | Handle owned, prioritized Linear tickets in the Q3 close project.',
+    );
+    expect(seen[1]).toContain(
+      '  [1] Email customers directly.\n  [2] Post to public Slack channels.',
+    );
+  });
+
+  it('disputes on a provider that answers by the first Will not do clause it reads, once the clauses are reversed (D-8 (a))', async (): Promise<void> => {
+    // A fake provider at the model seam (11.3): it refuses by clause [1] when that clause speaks
+    // of posting, and keeps the statement otherwise, whatever else the prompt says.
+    const byFirstClause: RefusalJudgementCall = async (user) =>
+      /\[1\] Post to public Slack channels\./.test(user)
+        ? { verdict: 'contradicts-will-not-do', clause: 1 }
+        : { verdict: 'keep', clause: null };
+    const twoEach = [
+      {
+        name: 'Ines',
+        willDo: runThrough.willDo,
+        willNotDo: ['Post to public Slack channels.', 'Email customers directly.'],
+      },
+    ];
+    expect(
+      await checkAgainstCharter(STATEMENT, { charters: twoEach, known: [] }, byFirstClause),
+    ).toMatchObject({
+      outcome: 'disputed',
+      refusal: { reason: 'contradicts-will-not-do', clause: 'Post to public Slack channels.' },
+    });
   });
 
   it('answers disputed, with the one refusal, when the second judgement keeps what the first refused', async (): Promise<void> => {

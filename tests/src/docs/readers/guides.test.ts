@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   BED_REQUESTS,
+  SIGN_INS_BEFORE_THE_TOKEN,
   THOUSAND_PAGE_REQUESTS,
+  THOUSAND_PAGE_UNCHANGED_AT_0_21,
   type ReadCosts,
 } from '../../../fixtures/readers/guide-counts';
 import type { LibraryKind } from '../../../fixtures/readers/library';
@@ -118,7 +120,27 @@ describe("wave 15's reader guides", (): void => {
       const text = guide(name);
       const section = text.slice(text.indexOf(`## ${heading}`), text.indexOf('## 1'));
       expect(section).toContain(`## ${heading}`);
-      expect(section).toMatch(/test doubles? of .* that day0's own tests use, not on a/);
+      expect(section).toMatch(/test doubles? of .* that Day0's own tests use, not on a/);
+    },
+  );
+
+  it.each<[string, 'sharepoint' | 'drive', string]>([
+    ['reader-sharepoint.md', 'sharepoint', 'one sign-in'],
+    ['reader-drive.md', 'drive', 'one token request'],
+  ])(
+    '%s says an unchanged read signs in once, and what 0.21.0 asked for again at every batch (wave 18, 18-X)',
+    (name, kind, once): void => {
+      const text = guide(name);
+      const before = SIGN_INS_BEFORE_THE_TOKEN[kind];
+      expect(text).toContain(`The ${printed(THOUSAND_PAGE_REQUESTS[kind].unchanged)} are ${once}`);
+      expect(text).toContain(
+        `${before.thousand} of its ${printed(THOUSAND_PAGE_UNCHANGED_AT_0_21[kind])} requests`,
+      );
+      expect(text).toContain(`${before.bed} of the bed's ${BED_REQUESTS[kind].unchanged}`);
+      // The bed counted 0.21.0, and the table says so.
+      expect(text).toMatch(/\(the 0\.21\.0 bed\)/);
+      // Kept between batches sealed with the credential key, never in a log or the export.
+      expect(text).toContain('never in a log or the export');
     },
   );
 

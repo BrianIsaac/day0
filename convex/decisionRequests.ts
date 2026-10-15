@@ -9,15 +9,16 @@ import { isOpenQuestion } from '../src/agent/manager-questions';
 import { compareProviderTs } from '../src/work/provider-ts';
 
 /*
- * A decision request's lifecycle (the wave 14 review's D-6, the standard's 9.2): asking the
- * manager through a channel they can be reached on, keeping a replaced or taken-back code
- * answerable, closing what a previous manager was asked at a handover, the requests and batches
- * open on a channel and the thread an answer goes in; moved out of `convex/work.ts` unchanged. The
- * registered request functions (`work:prepareDecisionRequest`, `work:recordDecisionRequest`,
- * `work:openDecisions` and their kin) stay in `convex/work.ts` and call these, and the jobs these
- * schedule keep their `managerChannelActions:*` names. This module sits below `convex/work.ts`:
- * `convex/work.ts` imports it and it never imports `./work`, so the move closes no import cycle.
- * It registers no function.
+ * A decision request's lifecycle (the wave 14 review's D-6, the standard's 9.2): asking the manager
+ * through a channel they can be reached on, keeping a replaced or taken-back code answerable,
+ * closing what a previous manager was asked at a handover, the requests and batches open on a
+ * channel and the thread an answer goes in; moved out of `convex/work.ts` unchanged. The registered
+ * request functions (`work:prepareDecisionRequest`, `work:recordDecisionRequest`,
+ * `work:openDecisions` and their kin) stay registered in `convex/work.ts`, their bodies in
+ * `convex/workManagerChannel.ts` (wave 18, 18-s) call these, and the jobs these schedule keep their
+ * `managerChannelActions:*` names. This module sits below `convex/work.ts`: `convex/work.ts`
+ * imports it and it never imports `./work`, so the move closes no import cycle. It registers no
+ * function.
  */
 
 /** Avoid scheduling an outbound action when no connected manager channel can claim it. */
@@ -721,9 +722,13 @@ export const RECENT_THREADS_READ = 10;
 
 /**
  * The most requests with a standing conflict question whose threads one poll reads on a channel,
- * newest first (17-C): each holds steps of a plan until it is answered, so few stand at once.
+ * newest first (17-C): each holds steps of a plan until it is answered, so few stand at once. Thirty
+ * since W17-R13 (a channel of twenty-five such requests had its oldest unread). With the window's
+ * ten that is forty calls of `conversations.replies` a poll a minute, under the fifty Slack's tier
+ * 3 documents (V18-6: not read off a workspace); each open request's own thread is read beside
+ * them and is not bounded here, so the poll's run logs the whole count (`threadReadsOf`).
  */
-export const QUESTION_THREADS_READ = 20;
+export const QUESTION_THREADS_READ = 30;
 
 /**
  * The provider timestamps of Day0's other messages in a manager DM whose threads are read: within

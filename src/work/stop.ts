@@ -362,9 +362,28 @@ function modelCallsInWords(reason: string): string {
 }
 
 /**
+ * The manager's words for a run that stopped because its reply still broke the executor's
+ * contract after the one repair (RM39 (b), 14 October 2026; section 7's draft). Without the
+ * draft's "Retry runs it again.": every line that prints a stop's reason says what Retry does
+ * after it, and the stopped note's own full stop follows it.
+ */
+export const CONTRACT_REFUSAL_WORDS =
+  'the model’s reply did not follow Day0’s rules for this skill after one repair';
+
+/**
+ * A reason recorded for a reply the executor's contract refused after its repair, in either phase
+ * and either mode (`ActionContractRefusal`'s message), and the form a real-mode row recorded
+ * before v0.22.0, when the refusal went through the resume ladder first ("the execution failed 4
+ * times on the model (executor procedure contract ...); Retry runs it again").
+ */
+const CONTRACT_REFUSAL =
+  /^(?:the execution failed \d+ times on the model \()?(?:dependent )?executor (?:action|procedure) contract remained invalid after one repair\b/;
+
+/**
  * A failed item's reason as the manager reads it: without the stopped prefix when it is a stop,
- * and with a model call's failure in words, never by the call's internal name
- * ({@link modelCallsInWords}).
+ * with a model call's failure in words, never by the call's internal name
+ * ({@link modelCallsInWords}), and a contract refusal in the manager's words, never by the
+ * contract's issues, which the kept reply carries ({@link CONTRACT_REFUSAL_WORDS}).
  *
  * Args:
  *   skipReason: The item's recorded reason.
@@ -373,9 +392,8 @@ function modelCallsInWords(reason: string): string {
  *   The reason text.
  */
 export function stopDetail(skipReason: string): string {
-  return modelCallsInWords(
-    isStopped(skipReason) ? skipReason.slice(STOPPED_PREFIX.length) : skipReason,
-  );
+  const detail = isStopped(skipReason) ? skipReason.slice(STOPPED_PREFIX.length) : skipReason;
+  return CONTRACT_REFUSAL.test(detail) ? CONTRACT_REFUSAL_WORDS : modelCallsInWords(detail);
 }
 
 /**

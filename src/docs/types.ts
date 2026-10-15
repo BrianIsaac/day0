@@ -57,9 +57,9 @@ export interface DocPage {
    * its source having given no date it could read (false); stored as `docPages.datedBySource`
    * (wave 17, D-8). Every reader sets it: a folder's file time counts as its source's (X-3), and a
    * page from a git checkout or a list of URLs is dated by the read. A page from an MCP server is
-   * false whatever time its server names: `updatedAt` takes that time where there is one, and the
-   * field says it is not held to be an edit time, as the measure has never held it. Absent only on
-   * a page object no reader made.
+   * dated by its source where its server names a time that parses (Notion's `last_edited_time`, a
+   * Drive server's `modifiedTime`, Atlassian's `lastModified`; RM42 (b), wave 18), and a generic
+   * server's resource, which names none, by the read. Absent only on a page object no reader made.
    */
   datedBySource?: boolean;
 }

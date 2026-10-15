@@ -1,0 +1,15 @@
+Compose project: day0-w18q
+The comparison's stand (mock mode) was taken down at 2026-10-15T00:28:15Z, after its export was read for
+bed-observations.json: pnpm setup:local clear --yes --purge-env (exit 0): 2 containers, 2 volumes and the
+network removed; the bed's .env.local removed with them. Then docker compose -p day0-w18q down -v
+--remove-orphans (exit 0). Verified at 00:28:22Z: no containers, volumes or networks remain for this
+project; ports 6810 to 6815 and 8180 free; no process running from the bed's clone. The function-log
+watcher started for structured-output.json was stopped by its own pids (child first) after the run. No
+app server, fake Slack, fake Linear or dashboard was started for the comparison. The same project had
+been stood once before in real mode for the revocation trials and taken down the same way at 23:41Z;
+it was stood once more afterwards in real mode for the second model's readings. The real-mode stand's
+own setup step (backend:build) re-tagged the machine-wide day0-convex-backend:git from its build cache
+(created 11 October, base label sha256:d715e9ec... unchanged); this stand used that image as built.
+No other compose project or volume on the machine was operated on; the two day0-redactor-warm volumes
+were read through their clone and left. No hosted deployment and no other checkout's environment was
+changed.

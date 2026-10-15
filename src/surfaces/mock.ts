@@ -7,6 +7,7 @@ import {
   type MockSurfaceSnapshot,
   type MockWriteResult,
 } from '../work/types';
+import { officeWriteWords } from './summary';
 import type { AdapterRun, AppliedAction, SurfaceAdapter } from './types';
 import type { SelectionRequest } from '../docs/select';
 import { errorMessage } from '../lib/errors';
@@ -24,6 +25,24 @@ export const READ_EFFECT_LENGTH = 4_000;
 export function clipEffect(text: string, max: number): string {
   const flat = text.replace(/\s+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+/** How long a landed write's line in the ledger may be. */
+const EFFECT_LENGTH = 180;
+
+/**
+ * What a write that landed in the office did, as the card's ledger line draws it: the office's
+ * words for the write (`officeWriteWords`), never its verb, a channel or sheet slug or a thread key
+ * (W17-R30: the cards printed "1 message posted to dm-manager · thread thread-double-charge").
+ *
+ * Args:
+ *   action: The office write that landed.
+ *
+ * Returns:
+ *   The ledger's line, one line and clipped.
+ */
+export function landedEffect(action: MockAction): string {
+  return clipEffect(officeWriteWords(action) ?? action.tool, EFFECT_LENGTH);
 }
 
 /** Adapter for the existing per-agent Convex mock environment. */
@@ -98,11 +117,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
             cells: cellsObj,
             addedBy: 'Day0 (agent)',
           });
-          effect = clipEffect(
-            `1 row appended to ${args.sheetSlug} · ${args.tabName} - ` +
-              args.cells.map((c) => `${c.header}=${c.value || '(blank)'}`).join(', '),
-            180,
-          );
+          effect = landedEffect(action);
           break;
         }
         case 'slack.postMessage': {
@@ -123,11 +138,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
             senderKind: 'agent-posted',
             body: args.body,
           });
-          effect = clipEffect(
-            `1 message posted to ${args.channelSlug}` +
-              `${args.threadKey ? ` · thread ${args.threadKey}` : ''} - “${args.body}”`,
-            180,
-          );
+          effect = landedEffect(action);
           // A coworker only replies to a message that actually landed.
           if (result.changed) {
             await ctx.scheduler.runAfter(
@@ -160,7 +171,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
             body: args.body,
             isAgentDraft: true,
           });
-          effect = clipEffect(`1 reply drafted on ${args.tweetSlug} - “${args.body}”`, 180);
+          effect = landedEffect(action);
           break;
         }
         case 'ticket.update': {
@@ -174,16 +185,7 @@ class MockSurfaceAdapter implements SurfaceAdapter {
             comment: args.comment,
             commentAuthor: run.agentName,
           });
-          effect = clipEffect(
-            [
-              `ticket ${args.slug}`,
-              args.status ? `set to ${args.status}` : null,
-              args.comment ? `1 comment - “${args.comment}”` : null,
-            ]
-              .filter(Boolean)
-              .join(' · '),
-            180,
-          );
+          effect = landedEffect(action);
           break;
         }
         case 'mcp.call':

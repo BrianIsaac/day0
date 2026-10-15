@@ -57,7 +57,7 @@ import { isWriteScope, openCard } from './reorientation';
 import { scopeReach } from './reorientationReach';
 import { assertNoHandoverOpen, assertNotBeingHandedOver } from './handoverFence';
 import schema from './schema';
-import { ROSTER_SCAN_LIMIT, rosterOf, rosterRowValidator, type RosterRow } from './roster';
+import { ROSTER_SCAN_LIMIT } from './roster';
 import { scheduleHeldChecks } from './workingAgreements';
 
 /** Where a permission grant came from: deployment, the manager, a skill or a surface. */
@@ -89,24 +89,6 @@ export const listForUser = query({
       .withIndex('by_userId', (q) => q.eq('userId', identity.ownerKey))
       .order('desc')
       .take(20);
-  },
-});
-
-/**
- * The owner's employees, one row each, for the landing page ({@link rosterOf}, `convex/roster.ts`).
- *
- * Owner-scoped like `listForUser`; a caller with no identity is refused (12-G). Writes nothing.
- *
- * @returns At most twenty rows, newest first.
- */
-export const rosterForUser = query({
-  args: {},
-  returns: v.array(rosterRowValidator),
-  handler: async (ctx): Promise<RosterRow[]> => {
-    const identity = await getCallerOrThrow(ctx);
-    // A token with an empty subject keys nobody's rows, the malformed ones keyed '' included.
-    if (identity.ownerKey === '') return [];
-    return await rosterOf(ctx, identity.ownerKey);
   },
 });
 

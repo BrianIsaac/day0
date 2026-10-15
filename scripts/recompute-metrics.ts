@@ -48,8 +48,8 @@ import {
   isEvaluationAgent,
   recordsWithinTenure,
   selectCompanyEmployees,
-  type EmployeeRecords,
 } from '../convex/metrics';
+import type { EmployeeRecords } from '../convex/companyFigures';
 import type { OwnerMetrics } from '../src/metrics/types';
 import { exportEntries, exportRows } from './convex-export';
 import {

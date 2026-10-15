@@ -213,6 +213,7 @@ async function parkForSkill(
     planPendingAt: undefined,
     decision: undefined,
     managerAnswers: undefined,
+    heldThroughChangeAt: undefined,
     draftClaimedAt: undefined,
   });
   const waitingId = await appendEvent(ctx, {

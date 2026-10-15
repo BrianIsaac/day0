@@ -13,6 +13,7 @@ import { sameManagerAddress } from '@/agent/manager-address';
 import { HANDED_OVER_AUTHOR_NAME } from '@/work/skill-library';
 import { systemDisplayName } from '@/surfaces/revokers/outcome';
 import { relationshipNoun } from '@/people/words';
+import { CARD_NOT_OPENED_REASON, quotedSummary } from '@/agent/reorientation-words';
 import { judgedAs, REEVALUATION } from '../verdict-words';
 import { finishedAs } from '../work/work-item';
 import type { ManagerAt } from '../earlier-manager';
@@ -616,6 +617,7 @@ const PLAN_HELD_BECAUSE: {
     'two pages disagree on a point it follows, to be decided on the Documentation tab',
   'reorientation-pending': (subject) =>
     `a reorientation card holds it until ${they(subject)} decide the card`,
+  'held-through-change': () => 'a reorientation card held it through a change it does not rest on',
 };
 
 /**
@@ -1248,15 +1250,18 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
       typeof p.attempt === 'number' ? ` (restart ${p.attempt})` : ''
     }${because(p.reason)}`,
   'work.plan-held': (p, subject) =>
-    p.reason === 'reorientation-pending' && text(p.summary)
-      ? `The plan${forItem(subject)} is held until ${addressee(subject)} ${earlierAddress(subject) === undefined ? 'decide' : 'decides'} the reorientation card${cardAbout(p.summary)}`
-      : p.reason === 'documentation-conflict' && text(p.heading)
-        ? `The plan${forItem(subject)} is held for ${addressee(subject)}: ${conflictPages(p.pages)} disagree about "${p.heading}", to be decided on the Documentation tab`
-        : `The plan${forItem(subject)} is held for ${addressee(subject)}: ${
-            typeof p.reason === 'string' && Object.hasOwn(PLAN_HELD_BECAUSE, p.reason)
-              ? PLAN_HELD_BECAUSE[p.reason](subject)
-              : `it waits for ${their(subject)} decision`
-          }`,
+    // A plan asked again, not drafted again (D-2 (b); section 7's draft, RM24).
+    p.reason === 'held-through-change' && text(p.summary)
+      ? `The plan${forItem(subject)} is asked for ${their(subject)} decision again: the change to ${quotedSummary(text(p.summary) ?? '')} does not affect it`
+      : p.reason === 'reorientation-pending' && text(p.summary)
+        ? `The plan${forItem(subject)} is held until ${addressee(subject)} ${earlierAddress(subject) === undefined ? 'decide' : 'decides'} the reorientation card${cardAbout(p.summary)}`
+        : p.reason === 'documentation-conflict' && text(p.heading)
+          ? `The plan${forItem(subject)} is held for ${addressee(subject)}: ${conflictPages(p.pages)} disagree about "${p.heading}", to be decided on the Documentation tab`
+          : `The plan${forItem(subject)} is held for ${addressee(subject)}: ${
+              typeof p.reason === 'string' && Object.hasOwn(PLAN_HELD_BECAUSE, p.reason)
+                ? PLAN_HELD_BECAUSE[p.reason](subject)
+                : `it waits for ${their(subject)} decision`
+            }`,
   'work.plan-approved': (p, subject) => {
     if (p.by === 'autonomous') {
       return `The plan${forItem(subject)} was approved under autonomous actions`;
@@ -1445,10 +1450,10 @@ const WORDS: { readonly [Type in EventType]: Words<Type> } = {
     p.joined === true
       ? `A deferred reorientation card opened again before its date, since a further change joined it${cardAbout(p.summary)}`
       : `A deferred reorientation card opened again on its date${cardAbout(p.summary)}`,
+  // The reason is the fixed sentence whatever the event holds: one written by 0.21.0 held the
+  // error's first line through the token scrub only (W17-R8).
   'reorientation.card-not-opened': (p, subject) =>
-    `Day0 could not open a reorientation card for ${subject.name}${
-      text(p.reason) ? ` (${text(p.reason)?.replace(/[.!?]+$/, '')})` : ''
-    }${cardAbout(p.summary)}`,
+    `Day0 could not open a reorientation card for ${subject.name} (${CARD_NOT_OPENED_REASON})${cardAbout(p.summary)}`,
 };
 
 /** A sentence as the record prints it: capitalised, closed with one full stop. */

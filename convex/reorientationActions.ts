@@ -31,14 +31,17 @@ export const propose = internalAction({
           basis,
         });
       },
-      fail: async (failure, basis) => {
+      // The card keeps the failure's kind; the provider's words, scrubbed, are the log's alone
+      // (W17-R8).
+      fail: async (kind, basis, detail) => {
         log.warn('reorientation: the proposal judgement failed', {
           reorientationId,
-          reason: failure,
+          kind,
+          reason: detail,
         });
         await ctx.runMutation(internal.reorientation.recordProposalFailure, {
           reorientationId,
-          failure,
+          failure: kind,
           ...(basis !== undefined ? { basis } : {}),
         });
       },

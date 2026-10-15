@@ -55,8 +55,10 @@ import {
 } from '../../src/surfaces/policy';
 import type { AppliedAction, SurfaceRecord } from '../../src/surfaces/types';
 import {
+  CONTRACT_REFUSAL_WORDS,
   DROPPED_READ_PREFIX,
   isStopped,
+  stopDetail,
   STOPPED_PREFIX,
   WITHHELD_ON_STOP,
 } from '../../src/work/stop';
@@ -9732,35 +9734,95 @@ describe('an execution failure on its way to the card (step 42, C-10)', (): void
     });
   });
 
-  it('keeps the refused reply in real mode once the resume ladder is spent, and nothing while a resume is owed (16-Q)', async (): Promise<void> => {
+  // 17-FW's C3, ruled RM39 (b) on 14 October 2026: a reply the contract refused after its one
+  // repair went through the resume ladder in real mode, three more whole model runs at 60, 120
+  // and 240 s for the same refusal, and the card then read "the execution failed 4 times on the
+  // model (executor procedure contract ...)". It stops at once now, as in mock mode.
+  it('a contract refusal in real mode stops at its first with the reply kept and the stop’s words naming no model', async (): Promise<void> => {
     useSurfaceMode('real');
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const refusal = refusedReply();
     recorded.skillFailure = refusal;
     const harness = convexTest(contractSchema(), allConvexModules());
     const { workItemId } = await seed(harness, 'real');
-    const { MAX_EXECUTION_RESUMES } = await import('../../convex/work');
 
-    for (let attempt = 1; attempt <= MAX_EXECUTION_RESUMES; attempt += 1) {
-      const resumed = await harness.action(internal.workActions.executeApprovedPlanInternal, {
-        workItemId,
-      });
-      expect(resumed.reason).toContain('execution will be tried again');
-      const waiting = await readItem(harness, workItemId);
-      expect(waiting.state).toBe('plan-approved');
-      expect(waiting.output).toBeUndefined();
-    }
-    await harness.action(internal.workActions.executeApprovedPlanInternal, { workItemId });
+    const returned = await harness.action(internal.workActions.executeApprovedPlanInternal, {
+      workItemId,
+    });
+    await harness.finishAllScheduledFunctions(vi.runAllTimers);
     const failed = await readItem(harness, workItemId);
 
+    expect(returned.reason).toBe(refusal.message);
     expect(failed.state).toBe('failed');
-    expect(failed.skipReason).toContain(`failed ${MAX_EXECUTION_RESUMES + 1} times on the model`);
-    expect(failed.output).toMatchObject({
+    expect(failed.skipReason).toBe(`stopped: ${refusal.message}`);
+    expect(failed.output).toEqual({
       draft: 'Sent Priya the verification.',
+      notes: 'The DM is the one action.',
       actions: [],
       applied: [],
       refusedReply: refusal.refused,
     });
+    expect(stopDetail(failed.skipReason ?? '')).toBe(CONTRACT_REFUSAL_WORDS);
+    expect(stopDetail(failed.skipReason ?? '')).not.toMatch(/times on the model|contract/);
+  });
+
+  // W17-R22: the phase-one kept reply was stored as every phase-one output is, unscrubbed, where
+  // the closing phase's is scrubbed with the owner's known values; the export scrubbed it after.
+  it('the phase-one refused reply is stored with the owner’s known values scrubbed', async (): Promise<void> => {
+    useSurfaceMode('real');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const key = randomBytes(32).toString('base64');
+    vi.stubEnv('DAY0_CREDENTIAL_KEY', key);
+    try {
+      const harness = convexTest(contractSchema(), allConvexModules());
+      const { workItemId } = await seed(harness, 'real');
+      // A password the page assigned has no token shape, so only the owner's exact values catch it.
+      const value = 'orchard-lantern-4417-quill';
+      await harness.run(async (ctx): Promise<void> => {
+        await ctx.db.insert('credentials', {
+          userId: 'owner',
+          kind: 'value',
+          label: 'linear service token',
+          source: 'entered',
+          createdAt: 1,
+          ...sealForOwner(value, { current: key }, 'owner'),
+        });
+      });
+      const refused = refusedReply().refused;
+      recorded.skillFailure = new ActionContractRefusal(
+        'executor procedure contract remained invalid after one repair: procedure-trail inventory contains a trail absent from loaded procedures',
+        {
+          ...refused,
+          reply: {
+            ...refused.reply,
+            draft: `Signed in to the tile with ${value} and sent Priya the verification.`,
+            actions: [
+              {
+                tool: 'slack.postMessage',
+                args: { channelSlug: 'dm-priya', body: `The password is ${value}.` },
+              },
+            ],
+          },
+          first: { draft: `First try with ${value}.`, notes: '', actions: [] },
+        },
+      );
+
+      // On a tree that still sends the refusal through the resume ladder, the row keeps the reply
+      // only once the ladder is spent; each resume is driven here so that tree is read too.
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        await harness.action(internal.workActions.executeApprovedPlanInternal, { workItemId });
+        if ((await readItem(harness, workItemId)).state === 'failed') break;
+      }
+      const failed = await readItem(harness, workItemId);
+
+      expect(failed.state).toBe('failed');
+      const kept = failed.output as { draft?: string; refusedReply?: { reply?: unknown } };
+      expect(kept.refusedReply?.reply).toBeDefined();
+      expect(JSON.stringify(failed.output)).not.toContain(value);
+      expect(kept.draft).toContain('sent Priya the verification');
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('scrubs a closing phase that fails the same way, on the card and on the kept ledger', async (): Promise<void> => {

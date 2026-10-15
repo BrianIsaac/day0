@@ -9,13 +9,16 @@
  * sync stores: the page's first level-one heading (`persistPage` in `convex/docSyncActions.ts`),
  * which is not always the title the reader read the page with.
  */
-import type {
-  DocumentationReader,
-  KeptPage,
-  StoredMark,
-  StoredRevisions,
-  UnreadPage,
+import {
+  readerTokenServes,
+  type DocumentationReader,
+  type KeptPage,
+  type ReaderToken,
+  type StoredMark,
+  type StoredRevisions,
+  type UnreadPage,
 } from '../../../src/docs/readers/batch';
+import { pageTitleHash } from '../../../src/docs/content-hash';
 import { markdownPageTitle } from '../../../src/docs/readers/folder';
 import type { DocPage, DocSourceRecord } from '../../../src/docs/types';
 
@@ -24,6 +27,33 @@ export const SYNC_BATCH = 25;
 
 /** What a source's pages were stored with, by ref. */
 export type StoredMarks = Map<string, StoredMark>;
+
+/** The deployment's key and the owner a test's stored title hashes are keyed with. */
+const TITLE_KEY = Buffer.alloc(32, 9).toString('base64');
+const TITLE_OWNER = 'owner-readers';
+
+/** The sync's means of taking a listed title's keyed hash, as it hands it to a reader (18-X). */
+export const hashTitle = (title: string): string => pageTitleHash(title, TITLE_KEY, TITLE_OWNER);
+
+/**
+ * Store a page's title as the sync does where the title holds a value its redaction takes out
+ * (17-X's F4 residual; wave 18, 18-D): the stored title redacted, and the keyed hash of the title
+ * its listing gave beside it, with the sync's means of taking a listed title's.
+ *
+ * @param marks - What earlier reads stored.
+ * @param ref - The page, stored already under the title its listing gave.
+ * @param redacted - The title as the store keeps it once redacted.
+ * @throws Error when no page of that ref is stored.
+ */
+export function storeRedactedTitle(
+  marks: StoredMarks,
+  ref: string,
+  redacted = 'Rotate the <credential: api key, stored> key',
+): void {
+  const mark = marks.get(ref);
+  if (mark === undefined) throw new Error(`no page ${ref} is stored`);
+  marks.set(ref, { ...mark, title: redacted, titleHash: hashTitle(mark.title), hashTitle });
+}
 
 /** What one whole read of a source gave. */
 export interface WholeRead {
@@ -35,6 +65,16 @@ export interface WholeRead {
   readonly batches: number;
   /** The refs each call of the contract asked about, in order. */
   readonly asked: string[][];
+  /** The tokens the batches handed back, in order (X-1). */
+  readonly handedBack: ReaderToken[];
+}
+
+/** How a whole read runs: the batch's size and the clock the sync reads a token's expiry by. */
+export interface WholeReadOptions {
+  /** The batch's size; the sync's own by default. */
+  readonly limit?: number;
+  /** The sync's clock; the reader's own should be the same one. `Date.now` by default. */
+  readonly now?: () => number;
 }
 
 /** The contract's answer from a store: the mark of each ref it holds. */
@@ -51,30 +91,45 @@ export function storedIn(marks: StoredMarks, asked: string[][] = []): StoredRevi
 }
 
 /**
- * Read a source whole, a batch at a time, answering the contract from the store and storing each
- * page read as the sync does.
+ * Read a source whole, a batch at a time, answering the contract from the store, storing each
+ * page read and carrying the reader's token from batch to batch as the sync does (X-1: one handed
+ * back replaces the one held, none handed back keeps it, and none is handed past its margin).
  *
  * @param marks - What earlier reads stored; each page this read reads is stored into it.
- * @param limit - The batch's size; the sync's own by default.
+ * @param options - The batch's size and the sync's clock.
  */
 export async function readWhole(
   reader: DocumentationReader,
   source: DocSourceRecord,
   secret: string,
   marks: StoredMarks,
-  limit: number = SYNC_BATCH,
+  options: WholeReadOptions = {},
 ): Promise<WholeRead> {
-  const whole: WholeRead = { read: [], kept: [], unread: [], batches: 0, asked: [] };
+  const limit = options.limit ?? SYNC_BATCH;
+  const now = options.now ?? Date.now;
+  const whole: WholeRead = {
+    read: [],
+    kept: [],
+    unread: [],
+    batches: 0,
+    asked: [],
+    handedBack: [],
+  };
   let cursor: string | undefined;
+  let token: ReaderToken | undefined;
   let batches = 0;
   do {
+    const handed = token !== undefined && readerTokenServes(token, now()) ? token : undefined;
     const batch = await reader.listPageBatch(
       source,
       secret,
       cursor,
       limit,
       storedIn(marks, whole.asked),
+      handed,
     );
+    if (batch.token !== undefined) whole.handedBack.push(batch.token);
+    token = batch.token ?? handed;
     if (batch.pages.length + batch.unread.length > limit) {
       throw new Error(`a batch read ${batch.pages.length + batch.unread.length} pages of ${limit}`);
     }

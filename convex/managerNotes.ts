@@ -19,10 +19,10 @@ import { askableChannel } from './decisionRequests';
  * finished run's note kept only where there is a channel to send it, sent at once per run or kept
  * for the digest, the delivery fields every manager message needs, and what the digest says is
  * still to decide; moved out of `convex/work.ts` unchanged. The registered note and digest
- * functions (`work:prepareManagerNote`, `work:prepareManagerDigest` and their kin) stay in
- * `convex/work.ts` and call these. This module sits below `convex/work.ts`: `convex/work.ts`
- * imports it and it never imports `./work`, so the move closes no import cycle. It registers no
- * function.
+ * functions (`work:prepareManagerNote`, `work:prepareManagerDigest` and their kin) stay registered
+ * in `convex/work.ts`, and their bodies in `convex/workManagerChannel.ts` (wave 18, 18-s) call
+ * these. This module sits below `convex/work.ts`: `convex/work.ts` imports it and it never imports
+ * `./work`, so the move closes no import cycle. It registers no function.
  */
 
 /**

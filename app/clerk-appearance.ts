@@ -41,14 +41,38 @@ export const clerkAppearance = {
     colorPrimary: 'var(--color-accent)',
     colorPrimaryForeground: 'var(--color-bg)',
     colorRing: 'var(--color-accent)',
-    // Clerk fills its destructive button with this and writes on it in white, and draws its error
-    // text in it: the solid step, not the chip text's lighter one (`app/globals.css`).
+    // Clerk fills its destructive button with this, which it writes on in white unless told,
+    // and draws its error text in it: the solid step, not the chip text's lighter one
+    // (`app/globals.css`). The label on that fill is the page's colour (`elements` below).
     colorDanger: 'var(--color-danger-solid)',
     colorSuccess: 'var(--color-ok)',
     colorWarning: 'var(--color-warn)',
     colorModalBackdrop: 'var(--color-scrim)',
     colorShadow: 'var(--color-shadow)',
     borderRadius: '0.5rem',
+  },
+  elements: {
+    // D-7 (a): Clerk writes its destructive button's label in white on `colorDanger`, 3.76:1 on
+    // the dark set's red (W17-R31, the review's bed 2). The page's colour reads 5.26:1 on that red,
+    // 4.57:1 on the step darker Clerk fills it with under the pointer, and 7.96:1 on the light
+    // set's.
+    // A primary button's label is the page's colour already (`colorPrimaryForeground`), so the one
+    // style is the form buttons' whatever their scheme: the danger one is the only one it moves.
+    formButtonPrimary: { color: 'var(--color-bg)' },
+    // RM40 (c): the page colours the mark. Clerk draws `logoImageUrl` as an image, which WebKit
+    // colours by the system's scheme rather than the page's (17-FX's F1: the head 1.81:1 on a
+    // light card, 3.31:1 on a dark one). The image's own pixels are moved out of its box, and the
+    // box is filled with the page's accent through the mark's shape, the eyes cut, exactly where
+    // `objectFit: contain` put the image: the head is the accent of the theme the viewer chose,
+    // in every engine.
+    logoImage: {
+      objectPosition: '-10000px 0',
+      backgroundColor: 'var(--color-accent)',
+      maskImage: `url(${DAY0_MARK_URL})`,
+      maskSize: 'contain',
+      maskPosition: 'center',
+      maskRepeat: 'no-repeat',
+    },
   },
 } satisfies Appearance;
 
@@ -67,7 +91,7 @@ export const clerkAppearance = {
 export const clerkSignInAppearance = {
   ...clerkAppearance,
   options: { ...clerkAppearance.options, logoPlacement: 'outside' },
-  elements: { logoBox: { marginBottom: '1.75rem' } },
+  elements: { ...clerkAppearance.elements, logoBox: { marginBottom: '1.75rem' } },
 } satisfies Appearance;
 
 /**

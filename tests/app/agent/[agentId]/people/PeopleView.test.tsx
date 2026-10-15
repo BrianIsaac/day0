@@ -17,6 +17,14 @@ const backend = vi.hoisted(() => ({
 vi.mock('convex/react', () => ({
   useQuery: (reference: unknown, args: unknown): unknown =>
     args === 'skip' ? undefined : backend.queries[getFunctionName(reference as never)],
+  // The figures are read through `useQueries` (wave 18, 18-F): each read answered as `useQuery` is.
+  useQueries: (queries: Record<string, { query: unknown }>): Record<string, unknown> =>
+    Object.fromEntries(
+      Object.entries(queries).map(([key, { query }]) => [
+        key,
+        backend.queries[getFunctionName(query as never)],
+      ]),
+    ),
   useMutation:
     (reference: unknown) =>
     async (args?: unknown): Promise<unknown> => {
@@ -813,10 +821,10 @@ describe('the Manager card’s state and reads', () => {
         runsInFlight: 1,
       },
       // An approved set not yet applied, which the old card counted and the move does not.
-      'work:listForAgent': [
-        { state: 'executing' },
-        { state: 'actions-pending', approvedIndexes: [0] },
-      ],
+      'work:listForAgent': {
+        items: [{ state: 'executing' }, { state: 'actions-pending', approvedIndexes: [0] }],
+        cut: false,
+      },
     });
     const view = mount(asEmployee(<PeopleView />));
     expect(managerCard(view.container).textContent).toContain('Mira is finishing 1 run;');

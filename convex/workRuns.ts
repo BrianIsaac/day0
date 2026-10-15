@@ -17,7 +17,7 @@ import {
   stepMayRun,
 } from './workLoop';
 import { appendEvent } from './eventLog';
-import { closeQuestionsAtRedraft } from './questionCloses';
+import { closeQuestionsAtRedraft, questionsOfItem } from './questionCloses';
 import { openRepeatedRefusalCards, refusedScopeOf } from './reorientationPatterns';
 import {
   assertSameAgent,
@@ -78,7 +78,7 @@ import {
   retryAnswersOf,
   retryRequiresProviderReconciliation,
 } from '../src/work/reconciliation';
-import { landedWritesOf, notSentWritesOf } from '../src/work/landed-writes';
+import { landedWritesOf, notSentWritesOf, redraftedOutput } from '../src/work/landed-writes';
 import {
   isStoppableItem,
   landedNoteRows,
@@ -137,27 +137,6 @@ function carriedIntoRetry(
 }
 
 /**
- * What a redrafted item keeps of its last run's output: the writes that landed and those not
- * sent, as a retry carries them (P4-1), and nothing of the plan they ran under.
- *
- * @param row - The item Retry sends back to drafting.
- * @returns The carried writes, or undefined when the run left none.
- */
-function redraftedOutput(row: Doc<'workItems'>): Record<string, unknown> | undefined {
-  const answered = retryAnswersOf(row.providerReconciliation?.entries ?? []);
-  const landedWrites = landedWritesOf(row.output, answered);
-  const unsentWrites = notSentWritesOf(row.output, answered);
-  if (landedWrites.length === 0 && unsentWrites.length === 0) return undefined;
-  return {
-    ...(landedWrites.length > 0 ? { landedWrites } : {}),
-    ...(unsentWrites.length > 0 ? { unsentWrites } : {}),
-  };
-}
-
-/** The questions of one item a retry reads for an answered conflict. */
-const ITEM_QUESTIONS_READ = 50;
-
-/**
  * Whether a documentation conflict the run's stop asked about was answered so that a page the plan
  * cites, or for a plan that cites nothing a page of the conflict it was asked about, is no longer
  * current (W16-R25, W3h; O-17 (b)): the run would meet the superseded page on resuming and stop
@@ -169,11 +148,9 @@ async function answerSupersededCite(ctx: MutationCtx, row: Doc<'workItems'>): Pr
   const cites =
     (row.plan as { cites?: ReadonlyArray<{ sourceId?: string; pageRef?: string }> } | undefined)
       ?.cites ?? [];
-  const questions = await ctx.db
-    .query('managerQuestions')
-    .withIndex('by_work_item', (q) => q.eq('workItemId', row._id))
-    .take(ITEM_QUESTIONS_READ);
-  for (const question of questions) {
+  // Every question of the item by page, as the apply's hold and the redraft's close read them
+  // (18-C's F4: a first fifty left a later answered question unread at Retry).
+  for (const question of await questionsOfItem(ctx, row._id)) {
     if (question.relationId === undefined || question.answer === undefined) continue;
     const relation = await ctx.db.get(question.relationId);
     if (relation === null) continue;
@@ -312,7 +289,7 @@ export const retryFailed = mutation({
       // A redraft keeps only what landed and what was answered not sent: the old plan's phases
       // would send the new plan's run into a closing resume of the old one (second pass).
       ...(redraft
-        ? { output: redraftedOutput(row) }
+        ? { output: redraftedOutput(row.output, row.providerReconciliation?.entries) }
         : carried
           ? { output: carried }
           : resume
@@ -324,6 +301,7 @@ export const retryFailed = mutation({
             decision: undefined,
             planPendingAt: undefined,
             managerAnswers: undefined,
+            heldThroughChangeAt: undefined,
             // The redraft's own plan site keeps its selection; the old draft's says nothing of
             // what the new plan is drafted from (W16-R11).
             selectedBlocks: undefined,

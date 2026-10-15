@@ -19,7 +19,9 @@ import {
   CONFIRMED_LANDED_REASON,
   ledgerPhases,
   NOT_SENT_AFTER_STOP_REASON,
+  retryAnswersOf,
   type EntryAnswer,
+  type ReconciliationEntry,
 } from './reconciliation';
 import type { LandedWrite, MockAction, UnsentWrite } from './types';
 import { escapeRegExp } from '../lib/regex';
@@ -183,6 +185,30 @@ function confirmedLanded(action: MockAction, entry: AppliedAction): AppliedActio
 function rowKeys(applied: AppliedAction): string[] {
   const source = reusedFrom(applied);
   return source === undefined ? [applied.idempotencyKey] : [applied.idempotencyKey, source];
+}
+
+/**
+ * What a work item sent back to drafting keeps of its last run's output: the writes that landed
+ * and those not sent, as a retry carries them (P4-1), and nothing of the plan they ran under. A
+ * Retry's redraft keeps it, and so does a card's Approve that sends back a run parked at its
+ * approval (W18-R8), so the new plan never sends again a write that already went.
+ *
+ * @param output - The item's persisted output.
+ * @param entries - The entries of the provider reconciliation the manager made, if any.
+ * @returns The carried writes, or undefined when the run left none.
+ */
+export function redraftedOutput(
+  output: unknown,
+  entries: readonly ReconciliationEntry[] = [],
+): Record<string, unknown> | undefined {
+  const answered = retryAnswersOf(entries);
+  const landedWrites = landedWritesOf(output, answered);
+  const unsentWrites = notSentWritesOf(output, answered);
+  if (landedWrites.length === 0 && unsentWrites.length === 0) return undefined;
+  return {
+    ...(landedWrites.length > 0 ? { landedWrites } : {}),
+    ...(unsentWrites.length > 0 ? { unsentWrites } : {}),
+  };
 }
 
 /**

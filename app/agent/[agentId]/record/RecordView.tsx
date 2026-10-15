@@ -3,12 +3,13 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
 import { Card } from '../../../components/Card';
 import { Columns } from '../../../components/Columns';
 import { ReadBoundary } from '../../../components/ReadBoundary';
 import { FiguresUnread } from '../EmployeeRail';
 import { useEmployee } from '../employee-context';
+import { useEmployeeFigures } from '../use-employee-figures';
+import type { AgentMetrics } from '@/metrics/types';
 import { useAgentZone } from '../../../components/time';
 import { KnowledgeProjection } from './KnowledgeProjection';
 import { MetricsCard } from './MetricsCard';
@@ -22,11 +23,13 @@ import {
 import { WorkspacePanel } from './WorkspacePanel';
 
 /**
- * The employee's figures so far, read here under the tab's `ReadBoundary`, so a read that fails
- * leaves the record standing (C1, 17-FW; W16-R31).
+ * The employee's figures so far, drawn under the tab's `ReadBoundary`: a read that failed is
+ * thrown to it, so the record stands (C1, 17-FW; W16-R31), and the boundary draws the figures
+ * again once the read, held above it, answers again (W17-R28).
  */
-function RecordFigures({ agentId }: { agentId: Id<'agents'> }) {
-  return <MetricsCard metrics={useQuery(api.metrics.forAgent, { agentId })} />;
+function RecordFigures({ read }: { read: AgentMetrics | undefined | Error }) {
+  if (read instanceof Error) throw read;
+  return <MetricsCard metrics={read} />;
 }
 
 /**
@@ -39,6 +42,8 @@ export function RecordView() {
   const zone = useAgentZone();
   const agentId = agent._id;
   const [shown, setShown] = useState<Shown>('all');
+  // Above the boundary, so it hears the read answer again; read by pages past one read (C1).
+  const figures = useEmployeeFigures(agentId);
   const projection = useQuery(api.memoryProjection.forAgent, { agentId });
   const workspace = useQuery(api.workspace.read, { agentId });
   const earlier = useQuery(api.managerTransfers.earlierManagers, { agentId });
@@ -55,13 +60,14 @@ export function RecordView() {
           <KnowledgeProjection name={agent.name} projection={projection} />
           <ReadBoundary
             what="metrics.forAgent"
+            resetKey={figures}
             fallback={
               <Card title="So far" meta="since deploy" tone="accent">
                 <FiguresUnread />
               </Card>
             }
           >
-            <RecordFigures agentId={agentId} />
+            <RecordFigures read={figures} />
           </ReadBoundary>
           <WorkspacePanel name={agent.name} workspace={workspace} />
         </>

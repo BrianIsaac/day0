@@ -84,7 +84,9 @@ describe('AdoptionCard', (): void => {
     expect(text).toContain(
       "Priya's skill kanban-comment-and-close, verified on 18 September 2026, does this. Mateo can adopt it. It would be re-verified in the sandbox under Mateo's Linear connection before Mateo can use it.",
     );
-    expect(text).toContain('Scopes Mateo would gain: linear:write');
+    // Re-pinned (W17-R30): the scope is said in words, where it was the `linear:write` string.
+    // Re-pinned (18-T's F5): the lead precedes words since W17-R30, so it says access.
+    expect(text).toContain('Access Mateo would gain: writing Linear');
     expect(buttonNames(view.container)).toEqual([
       'Adopt for Mateo | Adopt for Mateo: kanban-comment-and-close',
       'Write a new one instead | Write a new one instead of kanban-comment-and-close',
@@ -216,7 +218,7 @@ describe('AdoptionCard', (): void => {
     const text = view.container.textContent ?? '';
     expect(text).toContain('was withdrawn from every employee. Mateo cannot adopt it.');
     expect(text).not.toContain('Cannot adopt now');
-    expect(text).not.toContain('Scopes Mateo would gain');
+    expect(text).not.toContain('Access Mateo would gain');
   });
 
   it('shows a failed check with its log, and offers Write a new one instead and Decline', (): void => {

@@ -278,10 +278,10 @@ describe('ProposedSkillsPanel', (): void => {
     expect(text).toContain(
       'First needed by \u201cDraft response for new tier-two RevOps ask\u201d. No registered skill covers a threaded reply.',
     );
-    expect([...view.container.querySelectorAll('code')].map((chip) => chip.textContent)).toEqual([
-      'slack:read',
-      'slack:write',
-    ]);
+    // Re-pinned (W17-R30): the access approving grants is said as the take-on dialog says an
+    // employee's, where it drew the two scopes as `slack:read` and `slack:write` chips.
+    expect(text).toContain('Approving grants reading and writing Slack');
+    expect(text).not.toMatch(/slack:(read|write)/);
     // The adoption row's sentence went with the row: with nothing offered, the card says what
     // approving does and makes no claim about sharing.
     expect(text).not.toContain('do not share skills');

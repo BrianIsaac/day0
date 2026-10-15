@@ -3,7 +3,9 @@ import { vi } from 'vitest';
 import type { Doc, Id } from '../../../convex/_generated/dataModel';
 import type schema from '../../../convex/schema';
 import { internal } from '../../../convex/_generated/api';
-import { openCard, proposalBasis, type CardTrigger } from '../../../convex/reorientation';
+import { openCard, type CardTrigger } from '../../../convex/reorientation';
+import { proposalBasis } from '../../../convex/reorientationJudgementInput';
+import { proposalFingerprint } from '../../../src/agent/reorientation-words';
 import { MANAGER_ADDRESS, OWNER_SUBJECT } from './manager-identity';
 
 /*
@@ -122,6 +124,20 @@ export async function basisOf(
   reorientationId: Id<'reorientations'>,
 ): Promise<string> {
   return proposalBasis(await cardOf(harness, reorientationId));
+}
+
+/**
+ * What the page sends with Approve: the card, and the proposal it drew (`proposalFingerprint`),
+ * which Approve requires from 0.22.0 (O-2 (a)).
+ */
+export async function shownOf(
+  harness: Harness,
+  reorientationId: Id<'reorientations'>,
+): Promise<{ reorientationId: Id<'reorientations'>; shown: string }> {
+  return {
+    reorientationId,
+    shown: proposalFingerprint((await cardOf(harness, reorientationId)).proposed),
+  };
 }
 
 /** One card as stored. */

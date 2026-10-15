@@ -8,6 +8,25 @@ import { Help, ItemSection } from './ItemParts';
 import { PlanObligationsLine } from './RunDetails';
 import type { PlanObligationsRow } from './work-item';
 
+/**
+ * A plan's heading: its estimate and its reversibility where the stored plan holds them. Every plan
+ * Day0 drafts carries both; a row imported or stored without them is headed "Plan" alone, never
+ * "about undefined minutes" (18-O's F8).
+ *
+ * @param plan - The stored plan.
+ * @returns The section's title.
+ */
+function planHeading(plan: Pick<ItemPlan, 'estimatedMinutes' | 'reversibility'>): string {
+  const minutes: unknown = plan.estimatedMinutes;
+  const reversibility: unknown = plan.reversibility;
+  const parts = ['Plan'];
+  if (typeof minutes === 'number' && Number.isFinite(minutes)) {
+    parts.push(`about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`);
+  }
+  if (typeof reversibility === 'string' && reversibility.trim() !== '') parts.push(reversibility);
+  return parts.join(' · ');
+}
+
 /** A plan as the card reads it off the row. */
 export interface ItemPlan {
   summary: string;
@@ -58,12 +77,9 @@ export function PlanSection({
   const applied = (plan.appliedAgreements ?? []).flatMap((id) =>
     agreements.filter((agreement) => agreement._id === id),
   );
-  const minutes = plan.estimatedMinutes;
   const drafted = item.state === 'plan-pending' ? item.planDraftedWithout : undefined;
   return (
-    <ItemSection
-      title={`Plan · about ${minutes} ${minutes === 1 ? 'minute' : 'minutes'} · ${plan.reversibility}`}
-    >
+    <ItemSection title={planHeading(plan)}>
       <p className="text-sm text-[var(--color-fg-2)]">{plan.summary}</p>
       <ol className="grid list-decimal gap-1 pl-5 text-[15px] text-[var(--color-fg)]">
         {plan.steps.map((step, index) => (

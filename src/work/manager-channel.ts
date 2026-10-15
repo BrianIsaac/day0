@@ -116,6 +116,10 @@ export interface OpenDecisions {
   readonly threads?: readonly string[];
 }
 
+/** Why a question's notice was given up: the request it was to follow never reached the DM. */
+export const QUESTION_NOTICE_UNDELIVERED =
+  'The plan’s request was not delivered, so the question was not posted in its thread.';
+
 /** Nothing open and no notice owed: the decision poll leaves the DM unread. */
 export const NOTHING_OPEN: OpenDecisions = { requests: [], batches: [], noticeOwed: false };
 
@@ -138,6 +142,19 @@ export function readsManagerDm(open: OpenDecisions): boolean {
     open.batches.length > 0 ||
     open.noticeOwed ||
     (open.threads?.length ?? 0) > 0
+  );
+}
+
+/**
+ * How many threads the decision poll's read of the manager DM reads: one `conversations.replies`
+ * call for each open request delivered, and one for each other message's thread (W17-R13: the
+ * count is recorded on the poll's run, for Slack's rate tier, V18-6).
+ *
+ * @param open - What the channel has open.
+ */
+export function threadReadsOf(open: OpenDecisions): number {
+  return (
+    open.requests.filter((request) => request.ts !== undefined).length + (open.threads?.length ?? 0)
   );
 }
 
@@ -174,7 +191,17 @@ export type DecisionReply =
    * or both, and the question's number where the manager gave one (17-C). A bare answer names none
    * and is taken when exactly one question stands.
    */
-  | { verb: 'answer'; id: string; choice: ConflictChoice; number?: number };
+  | {
+      verb: 'answer';
+      id: string;
+      choice: ConflictChoice;
+      number?: number;
+      /**
+       * The number was typed run into its letter ("2B"): read, and answered with how to write it
+       * and the numbers that exist, never taken as the answer (W17-R13).
+       */
+      runTogether?: true;
+    };
 
 /**
  * The longest manager reason kept in full, from the card or from chat alike.
@@ -188,6 +215,24 @@ export const MANAGER_FEEDBACK_MAX_CHARS = 1000;
  * which on a phone hides the reply line.
  */
 export const MANAGER_MESSAGE_MAX_CHARS = 3_000;
+
+/** A decision code as a reply's pattern reads it: four to six of the code alphabet's symbols. */
+const DECISION_CODE = `[${DECISION_ID_ALPHABET}]{4,6}`;
+
+/**
+ * An answer to a conflict's question: the code, the question's number if any, and the letter. A
+ * number is nought or has no leading nought, so "01" is never read as question 1.
+ */
+const ANSWER_SPACED = new RegExp(
+  `^answer\\s*:?\\s+(${DECISION_CODE})(?:\\s+(0|[1-9]\\d{0,5}))?\\s+(a|b|both)$`,
+  'i',
+);
+
+/** The same with the number run into its letter ("2B"), read so the channel can say how to write it. */
+const ANSWER_RUN_TOGETHER = new RegExp(
+  `^answer\\s*:?\\s+(${DECISION_CODE})\\s+(0|[1-9]\\d{0,5})(a|b|both)$`,
+  'i',
+);
 
 /** What may follow an approve and still leave it an approval: a courtesy, nothing more. */
 const APPROVE_COURTESY = /^(?:thanks|thank you|thx|ty|cheers|please|pls|go ahead|ok|okay|sure)$/i;
@@ -209,10 +254,11 @@ export function parseDecisionReply(text: string): DecisionReply | undefined {
     .replace(/^[\s"'“”‘’`*_]+/, '')
     .replace(/[\s"'“”‘’`*_.!,;:)]+$/, '')
     .trim();
-  const answer =
-    /^answer\s*:?\s+([23456789abcdefghjkmnpqrstuvwxyz]{4,6})(?:\s+([1-9]\d{0,2}))?\s+(a|b|both)$/i.exec(
-      flat,
-    );
+  // A number no question has (0, 1000) and one run into its letter (2B) are read too, so the
+  // channel can say which numbers exist rather than nothing at all (W17-R13).
+  const spaced = ANSWER_SPACED.exec(flat);
+  const runTogether = spaced === null ? ANSWER_RUN_TOGETHER.exec(flat) : null;
+  const answer = spaced ?? runTogether;
   if (answer) {
     const letter = answer[3].toLowerCase();
     return {
@@ -220,6 +266,7 @@ export function parseDecisionReply(text: string): DecisionReply | undefined {
       id: answer[1].toLowerCase(),
       ...(answer[2] === undefined ? {} : { number: Number(answer[2]) }),
       choice: letter === 'a' ? 'from' : letter === 'b' ? 'to' : 'both',
+      ...(spaced === null ? { runTogether: true as const } : {}),
     };
   }
   const match =

@@ -18,6 +18,7 @@ import { runThroughBody } from '../fixtures/run-through-charter-2026-09-14';
 import { MANAGER_ADDRESS, fixtureAddressOf, managerIdentity } from './fakes/manager-identity';
 import { ORGANISATION_HOLDER, ORGANISATION_OWNER_KEY } from '../../src/lib/organisation-key';
 import { restoreSurfaceMode, useSurfaceMode } from './surface-mode-env';
+import { rosterRows } from './fakes/roster';
 
 /** The account the handover names, signed in with its verified address. */
 const COLLEAGUE = managerIdentity('colleague');
@@ -618,7 +619,7 @@ describe('transferPreview: what the named manager reads before accepting (transf
         paginationOpts: { numItems: 200, cursor: null },
       }),
     ).rejects.toThrow();
-    const roster = await colleague.query(api.agents.rosterForUser, {});
+    const roster = await rosterRows(colleague);
     expect(roster.map((row) => row.name)).toEqual(['Priya']);
   });
 });
@@ -644,9 +645,7 @@ describe('accept in mock mode: the office moves and nothing is kept (14.1 items 
     await expect(owner.query(api.agents.get, { agentId: office.maya })).rejects.toMatchObject({
       data: EMPLOYEE_NOT_YOURS,
     });
-    expect((await owner.query(api.agents.rosterForUser, {})).map((row) => row.name)).toEqual([
-      'Tomas',
-    ]);
+    expect((await rosterRows(owner)).map((row) => row.name)).toEqual(['Tomas']);
     expect(
       (await owner.query(api.work.needsYou, {})).waitingByEmployee.map((entry) => entry.agentId),
     ).not.toContain(office.maya);
@@ -658,9 +657,7 @@ describe('accept in mock mode: the office moves and nothing is kept (14.1 items 
     const moved = await read(office.harness, office.maya);
     expect(moved?.autonomousActions).toBeUndefined();
     expect(moved?.managerNotifications).toBeUndefined();
-    expect(
-      (await colleague.query(api.agents.rosterForUser, {})).map((row) => row.name).sort(),
-    ).toEqual(['Maya', 'Priya']);
+    expect((await rosterRows(colleague)).map((row) => row.name).sort()).toEqual(['Maya', 'Priya']);
   });
 
   it('records the move on the request and in the employee’s record, and renders the identity for the new manager', async (): Promise<void> => {

@@ -5,6 +5,7 @@ import {
   type ProposalStore,
 } from '../../../src/agent/reorientation-judgement';
 import type { ProposalInput } from '../../../src/agent/reorientation-proposal';
+import { ModelRefusalError, ModelReplyCutError } from '../../../src/lib/structured-fallback';
 import { CORPUS_SLOTS } from '../../fixtures/redaction-corpus';
 
 const INPUT: ProposalInput = {
@@ -36,12 +37,12 @@ describe('judgeProposal', (): void => {
     });
   });
 
-  it('answers unavailable with the reason when the call fails or the reply is refused', async (): Promise<void> => {
+  it('answers unavailable with the kind, and the reason for the log, when the call fails or the reply is refused', async (): Promise<void> => {
     await expect(
       judgeProposal(INPUT, async () => {
         throw new Error('timed out');
       }),
-    ).resolves.toEqual({ outcome: 'unavailable', reason: 'timed out' });
+    ).resolves.toEqual({ outcome: 'unavailable', kind: 'timeout', detail: 'timed out' });
     // A provider's echo of a credential, and a stack, never reach the card (the second pass's minor).
     await expect(
       judgeProposal(INPUT, async () => {
@@ -49,7 +50,11 @@ describe('judgeProposal', (): void => {
           `401 for Bearer ${CORPUS_SLOTS.slack_bot_token}\n    at Transport._send (/srv/app/index.mjs:1:1)`,
         );
       }),
-    ).resolves.toEqual({ outcome: 'unavailable', reason: '401 for Bearer <redacted>' });
+    ).resolves.toEqual({
+      outcome: 'unavailable',
+      kind: 'failed',
+      detail: '401 for Bearer <redacted>',
+    });
     await expect(
       judgeProposal(INPUT, async () => ({
         change: 'edit-clause',
@@ -60,7 +65,41 @@ describe('judgeProposal', (): void => {
       })),
     ).resolves.toEqual({
       outcome: 'unavailable',
-      reason: 'the reply names candidate 2, which the card does not hold',
+      kind: 'unreadable',
+      detail: 'the reply names candidate 2, which the card does not hold',
+    });
+  });
+});
+
+describe('a failed judgement’s kind (W17-R8)', (): void => {
+  it('answers a provider’s refusal, a timeout, an unreadable reply and anything else by their kinds, the provider’s words for the log only', async (): Promise<void> => {
+    const failing = async (error: unknown) =>
+      await judgeProposal(INPUT, async () => {
+        throw error;
+      });
+    await expect(
+      failing(
+        Object.assign(new Error('400 Bad Request: account acct_9f2 is over its quota'), {
+          statusCode: 400,
+        }),
+      ),
+    ).resolves.toEqual({
+      outcome: 'unavailable',
+      kind: 'refused',
+      detail: '400 Bad Request: account acct_9f2 is over its quota',
+    });
+    const spent = Object.assign(new Error('the model call reached its 30000ms budget'), {
+      name: 'TimeoutError',
+    });
+    await expect(failing(spent)).resolves.toMatchObject({ kind: 'timeout' });
+    await expect(failing(new ModelRefusalError('day0', 'no'))).resolves.toMatchObject({
+      kind: 'refused',
+    });
+    await expect(failing(new ModelReplyCutError('day0', '{"change":'))).resolves.toMatchObject({
+      kind: 'unreadable',
+    });
+    await expect(failing(new Error('something else'))).resolves.toMatchObject({
+      kind: 'failed',
     });
   });
 });
@@ -70,10 +109,10 @@ describe('proposeOnCard: the judgement with its failures recorded (W16-R23)', ()
   function store(over: Partial<ProposalStore> = {}): {
     readonly store: ProposalStore;
     readonly written: unknown[];
-    readonly failed: Array<{ reason: string; basis: string | undefined }>;
+    readonly failed: Array<{ kind: string; basis: string | undefined; detail: string }>;
   } {
     const written: unknown[] = [];
-    const failed: Array<{ reason: string; basis: string | undefined }> = [];
+    const failed: Array<{ kind: string; basis: string | undefined; detail: string }> = [];
     return {
       written,
       failed,
@@ -82,8 +121,8 @@ describe('proposeOnCard: the judgement with its failures recorded (W16-R23)', ()
         write: async (proposed) => {
           written.push(proposed);
         },
-        fail: async (reason, basis) => {
-          failed.push({ reason, basis });
+        fail: async (kind, basis, detail) => {
+          failed.push({ kind, basis, detail });
         },
         ...over,
       },
@@ -116,7 +155,7 @@ describe('proposeOnCard: the judgement with its failures recorded (W16-R23)', ()
     });
     await expect(proposeOnCard(card.store, nothing)).resolves.toBe('failed');
     expect(card.failed).toEqual([
-      { reason: 'the write was refused for Bearer <redacted>', basis: 'basis-1' },
+      { kind: 'failed', basis: 'basis-1', detail: 'the write was refused for Bearer <redacted>' },
     ]);
   });
 
@@ -127,7 +166,9 @@ describe('proposeOnCard: the judgement with its failures recorded (W16-R23)', ()
       },
     });
     await expect(proposeOnCard(card.store, nothing)).resolves.toBe('failed');
-    expect(card.failed).toEqual([{ reason: 'the card could not be read', basis: undefined }]);
+    expect(card.failed).toEqual([
+      { kind: 'failed', basis: undefined, detail: 'the card could not be read' },
+    ]);
   });
 
   it('records a judgement the model could not give, and does nothing for a card already decided', async (): Promise<void> => {
@@ -137,7 +178,7 @@ describe('proposeOnCard: the judgement with its failures recorded (W16-R23)', ()
         throw new Error('timed out');
       }),
     ).resolves.toBe('failed');
-    expect(down.failed).toEqual([{ reason: 'timed out', basis: 'basis-1' }]);
+    expect(down.failed).toEqual([{ kind: 'timeout', basis: 'basis-1', detail: 'timed out' }]);
     const decided = store({ read: async () => null });
     await expect(proposeOnCard(decided.store, nothing)).resolves.toBe('nothing');
     expect([decided.written, decided.failed]).toEqual([[], []]);

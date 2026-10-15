@@ -365,6 +365,107 @@ function describeHttpRequest(
   return write(`${parsed.method} ${label(parsed.path, 120)} on ${name}`);
 }
 
+/** The mock office's DM with the manager, the one channel a write to "you" is posted in. */
+const OFFICE_MANAGER_DM = 'dm-manager';
+
+/** A DM with one of the office's people, named by its slug: `dm-priya` is Priya's. */
+const OFFICE_PERSON_DM = /^dm-([a-z][a-z0-9]*)$/;
+
+/**
+ * What each thread the mock office seeds is about, by its key (W17-R30: the cards printed
+ * "thread thread-double-charge"). A Slack thread has no subject of its own, so the office's asks
+ * are named here by what each asks; `tests/src/surfaces/summary.test.ts` holds every seeded ask's
+ * thread to an entry, so an ask added to the office without one fails there.
+ */
+export const OFFICE_THREAD_SUBJECTS: Readonly<Record<string, string>> = {
+  'thread-drive-access': 'the shared drive after a password change',
+  'thread-spare-monitor': 'a spare monitor for desk 14',
+  'thread-double-charge': 'Northwind’s double charge',
+  'thread-pipeline-coverage': 'enterprise pipeline coverage',
+};
+
+/**
+ * What a seeded thread is about, read as the map's own entry only: the key is the model's to
+ * choose, and a plain lookup reads "constructor" as the object's own function (W18-R21).
+ *
+ * @param threadKey - A message's thread key.
+ * @returns The thread's subject, or undefined for a thread the office did not seed.
+ */
+export function threadSubjectOf(threadKey: string): string | undefined {
+  return Object.hasOwn(OFFICE_THREAD_SUBJECTS, threadKey)
+    ? OFFICE_THREAD_SUBJECTS[threadKey]
+    : undefined;
+}
+
+/** A ticket's state as the office's board shows it. */
+function ticketStateWords(status: string): string {
+  return label(status.replace(/-/g, ' '), 40);
+}
+
+/** Where an office message goes: to the manager, to a person by name, or into a channel. */
+function officeMessagePlace(channel: string | undefined): string {
+  if (channel === OFFICE_MANAGER_DM) return 'to you';
+  const person = channel === undefined ? null : OFFICE_PERSON_DM.exec(channel);
+  if (person) return `to ${person[1]![0]!.toUpperCase()}${person[1]!.slice(1)}`;
+  return channel === undefined ? '' : `in #${label(channel, 60)}`;
+}
+
+/**
+ * A write to the mock office in a manager's words (W17-R30, section 7's draft): what is written,
+ * to whom or where, in the system's own name as the employee's access names it ("Slack", "the
+ * spreadsheet", "tickets", "social mentions"), and the start of what it says. A noun phrase, so the
+ * same line heads a write that is waiting, one that landed and one that was never sent. No verb's
+ * name, no channel or sheet slug and no thread key reaches it.
+ *
+ * Args:
+ *   action: One of the office's four verbs.
+ *   limit: How much of a body the line quotes.
+ *
+ * Returns:
+ *   The line, or undefined for a verb the office does not have.
+ */
+export function officeWriteWords(
+  action: MockAction,
+  limit: number = SUMMARY_TEXT_LIMIT,
+): string | undefined {
+  const args = action.args ?? {};
+  const said = args.body?.trim() ? `: ${quote(args.body, limit)}` : '';
+  switch (action.tool) {
+    case 'slack.postMessage': {
+      const place = officeMessagePlace(args.channelSlug);
+      const subject = args.threadKey ? threadSubjectOf(args.threadKey) : undefined;
+      const thread = args.threadKey
+        ? subject
+          ? `, in the thread about “${subject}”`
+          : ', in a thread'
+        : '';
+      return `A message ${place ? `${place} ` : ''}in Slack${thread}${said}`;
+    }
+    case 'spreadsheet.appendRow': {
+      const tab = args.tabName?.trim() ? `’s “${label(args.tabName, 60)}” tab` : '';
+      const cells = (args.cells ?? []).filter((cell) => cell.header.trim() !== '');
+      const shown = cells
+        .slice(0, 6)
+        .map((cell) => `${label(cell.header, 40)} ${excerpt(cell.value, 40) || '(blank)'}`);
+      const more = cells.length > shown.length ? `, +${cells.length - shown.length} more` : '';
+      return `A new row on the spreadsheet${tab}${shown.length > 0 ? `: ${shown.join(', ')}${more}` : ''}`;
+    }
+    case 'ticket.update': {
+      const ticket = args.slug?.trim() ? `ticket ${label(args.slug, 60)}` : 'a ticket';
+      const comment = args.comment?.trim() ? quote(args.comment, limit) : undefined;
+      if (args.status) {
+        const moved = `${ticket[0]!.toUpperCase()}${ticket.slice(1)} moved to ${ticketStateWords(args.status)}`;
+        return comment ? `${moved}, with a comment: ${comment}` : moved;
+      }
+      return comment ? `A comment on ${ticket}: ${comment}` : `A change to ${ticket}`;
+    }
+    case 'twitter.reply':
+      return `A reply to a social mention${said}`;
+    default:
+      return undefined;
+  }
+}
+
 /**
  * Describe one action in plain language.
  *
@@ -396,5 +497,7 @@ export function summariseAction(
       action.tool === 'mcp.call' ? (firstString(args, ['tool']) ?? action.tool) : action.tool;
     return write(`${label(tool)} on ${surfaceName(slug, surfaces)}`);
   }
+  const office = officeWriteWords(action, context.textLimit ?? SUMMARY_TEXT_LIMIT);
+  if (office !== undefined) return write(office);
   return write(slug ? `${label(action.tool)} on ${label(slug)}` : label(action.tool));
 }

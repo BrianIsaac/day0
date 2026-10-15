@@ -1249,6 +1249,10 @@ describe("per-employee mode: the employee's own app", (): void => {
           .map((event) => event.payload),
       ).toEqual([expect.objectContaining({ credentialId: first, outcome: 'token-revoked' })]);
     });
+    // The card's probe is still running here, through the fake's fetch stubbed above: waited for,
+    // or it reaches the real fetch once the test's stub is gone, the next test's refusal or none
+    // (18-G).
+    await harness.finishInProgressScheduledFunctions();
   });
 
   it('installs again from one Connect on a card Linear refused to renew, ending the refused pair as a Disconnect does (R41X-4)', async (): Promise<void> => {
@@ -1306,6 +1310,10 @@ describe("per-employee mode: the employee's own app", (): void => {
         }),
       ]);
     });
+    // The card's probe is still running here, through the fake's fetch stubbed above: waited for,
+    // or it reaches the real fetch once the test's stub is gone, the next test's refusal or none
+    // (18-G).
+    await harness.finishInProgressScheduledFunctions();
   });
 
   it('renews an expired card by re-authorising its own app through the issuer, with a fresh link (join 6)', async (): Promise<void> => {
@@ -1349,6 +1357,10 @@ describe("per-employee mode: the employee's own app", (): void => {
       actsAs: { kind: 'own-app', providerIdentityId: 'app-user-day0-leo' },
     });
     expect(linear.live(await bearerOf(harness, surface.credentialId!))).toBe(true);
+    // The card's probe is still running here, through the fake's fetch stubbed above: waited for,
+    // or it reaches the real fetch once the test's stub is gone, the next test's refusal or none
+    // (18-G).
+    await harness.finishInProgressScheduledFunctions();
   });
 
   it("keeps the installed app's secret until a newly recorded app's installation lands", async (): Promise<void> => {

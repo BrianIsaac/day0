@@ -1,0 +1,13 @@
+REVOPS-1 state=plan-pending skip=
+summary: Escalate the missing NetLedger access to the manager now, then propose the required Linear audit comment and Done transition. The Linear writes are held for the manager's literal approval.
+  step 1: Send the manager a DM now, flagging that NetLedger evidence cannot be read through a connected surface, naming the NetLedger documentation location and the search terms September ledger reconciliation and audit comment, and summarising the proposed Linear comment and Done change.
+  step 2: Propose a new top level audit comment on the ticket, stating that the ticket reports the reconciliation complete, the ticket description was read, and the NetLedger reconciliation record remains unknown because no approved connected access path is available. Keep the comment within 60 words, so it complies with both documented limits. Hold this Linear write for the manager's literal approval.
+  step 3: After the audit comment posts, propose changing the ticket state to Done. Hold this separate Linear write for the manager's literal approval.
+  cite step 1: Systems folder/netledger.md#NetLedger
+  cite step 2: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Add an audit comment > Action shape
+  cite step 2: Revops folder/runbooks/close-comment-limits.md#Close comment limits > What a comment carries
+  cite step 3: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Change issue status > Action shape
+  cite step 3: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Closing the loop
+risk: NetLedger is declared but has no connected surface. The manager should decide whether the ticket report is sufficient to approve Done, or provide an approved access path for reconciliation evidence. I did not find a September ledger reconciliation procedure in the loaded documentation.
+obligations: [('write', ['slack']), ('conditional-write', ['linear']), ('conditional-write', ['linear'])] conditional-on-manager
+selectedBlocks: 40 decision: 5w7ce2

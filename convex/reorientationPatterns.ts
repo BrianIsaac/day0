@@ -2,13 +2,13 @@ import type { MutationCtx, QueryCtx } from './_generated/server';
 import type { Id } from './_generated/dataModel';
 import { eventsOfType } from './eventLog';
 import {
-  REFUSAL_KEY_PREFIX,
   charterClausesWhere,
   isWriteScope,
   openCard,
   openCards,
   type CardTrigger,
 } from './reorientation';
+import { REFUSAL_KEY_PREFIX } from './reorientationJudgementInput';
 import { scopeReach } from './reorientationReach';
 import type { ReorientationTrigger } from '../src/agent/reorientation-vocabulary';
 

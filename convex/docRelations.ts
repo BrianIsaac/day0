@@ -21,12 +21,15 @@ import {
   pageAt,
   relationsBetween,
   type NamedPage,
+  type PageName,
 } from './docRelationProposals';
 import {
   RELATION_DECISIONS,
   authorityOf,
   confirmedConflictsOfPages,
   conflictsUnderPlan,
+  CONFLICT_WALK_LOOKUPS,
+  planReadsWholeMirror,
   decisionsOffered,
   standingConflictOf,
   standingConflictsFrom,
@@ -52,7 +55,7 @@ import {
   type SourceAuthority,
   type StatusSource,
 } from '../src/docs/authority';
-import { RELATION_CANDIDATES_PER_PAGE, measureRelation } from '../src/docs/relations';
+import { measureRelation } from '../src/docs/relations';
 import { approvedResultWords, conflictChoiceWords } from '../src/agent/reorientation-words';
 import { isOpenQuestion } from '../src/agent/manager-questions';
 import { storedPageReadBytes } from '../src/docs/blocks';
@@ -60,12 +63,12 @@ import { log } from '../src/lib/logger';
 
 /*
  * Relations between stored pages (wave 15, 15-A; the wave file's section 6.2): the proposals a
- * finishing sync writes for the pages it stored or changed (`measurePage`, over
- * `src/docs/relations.ts`), and the manager's decision on each (`decide`). A relation is
- * confirmed on a card and never by code: a proposal changes no page's status, holds no plan and
- * tags no cite. A confirmed successor supersedes the older page (`docStatus.restatePage`); a
- * confirmed conflict between two active pages of equal trust stands (`standingConflictOf`) until
- * the manager says which page is right or that both hold.
+ * finishing sync writes for the pages it stored or changed (`pageCandidates` and `measurePair`, a
+ * pair a transaction since D-12 (a), over `src/docs/relations.ts`), and the manager's decision on
+ * each (`decide`). A relation is confirmed on a card and never by code: a proposal changes no
+ * page's status, holds no plan and tags no cite. A confirmed successor supersedes the older page
+ * (`docStatus.restatePage`); a confirmed conflict between two active pages of equal trust stands
+ * (`standingConflictOf`) until the manager says which page is right or that both hold.
  *
  * Its helpers sit below it by concern (wave 16, 16-s, decision D-8): the measures, candidates and
  * proposals at a sync in `convex/docRelationProposals.ts`, the standing conflict and the answers a
@@ -75,17 +78,14 @@ import { log } from '../src/lib/logger';
  * This module imports nothing of `docSources` or of anything that reaches `work`.
  */
 
-/** The most of an owner's sources one page's candidates are looked for in. */
-const CANDIDATE_SOURCES = 32;
-
 /**
- * The most a measure reads of its page's and its candidates' rows and blocks together, by
- * `storedPageReadBytes` (D-12 (b)): under a transaction's 16 MiB, with room for the search and the
- * relations it reads beside them. Four pages each under the store's bound passed that limit
- * together on 17-FD's bed and failed the whole measure, every pair with it (17-FD's F3 with F9).
- * A candidate whose read would pass the budget is passed over before its blocks are read, and the
- * log names it; its pair is still met when the candidate is measured itself. Measuring each
- * candidate in a transaction of its own, which needs no budget, is wave 18's (D-12 (a)).
+ * The most a pair's measure reads of its two pages' rows and blocks, by `storedPageReadBytes`
+ * (D-12 (b)): under a transaction's 16 MiB, with room for the relations it reads beside them. Two
+ * pages each under the store's bound fit it; it stays as the pair's cheap first test, so a
+ * candidate whose row, read already, says its read would pass the budget is passed over before
+ * its blocks are read, and the log names it. Since D-12 (a) each pair is measured in a
+ * transaction of its own (`measurePair`), so four pages that together passed the limit on 17-FD's
+ * bed (its F3 with F9) are four pairs that each fit.
  */
 const MEASURE_READ_BYTES = 12 * 1024 * 1024;
 
@@ -105,8 +105,13 @@ async function readersOfEither(
   return [...readers.values()];
 }
 
-/** What one page's measure wrote. */
+/** What one page's measure wrote, over the pairs it measured (`docSyncActions.measurePage`). */
 export interface PageMeasure {
+  /**
+   * Whether the run is still the source's running or last completed one: false once a newer sync
+   * has overtaken it, which measures instead, and the measuring stops.
+   */
+  readonly current: boolean;
   /** How many relations it proposed. */
   readonly proposed: number;
   /**
@@ -114,101 +119,139 @@ export interface PageMeasure {
    * measured again, where it was once counted measured and its last candidates never met.
    */
   readonly cut: boolean;
+  /** The candidates whose pair's measure threw, to be tried again (D-12 (a)). */
+  readonly failed: readonly PageName[];
+  /** The candidates passed over at `MEASURE_READ_BYTES` before their blocks were read. */
+  readonly passedOver: readonly PageName[];
 }
 
+/** Whether a run is the source's running or last completed one: a newer sync measures instead. */
+function measuresFor(source: Doc<'docSources'>, runId: Id<'docSyncRuns'>): boolean {
+  return source.activeSyncId === runId || source.lastCompletedSyncId === runId;
+}
+
+/** The most of an owner's sources one page's candidates are looked for in. */
+const CANDIDATE_SOURCES = 32;
+
+/** A page's candidates, or that its run is no longer the one that measures. */
+export type PageCandidates =
+  | { readonly current: false }
+  | { readonly current: true; readonly candidates: PageName[] };
+
+const pageNameValidator = v.object({ sourceId: v.id('docSources'), ref: v.string() });
+
 /**
- * Measure one page a sync stored or changed against the owner's other active pages, and write a
- * `proposed` relation for each pair the measures relate that holds none yet. Internal; the sync
- * calls it a page at a time once its generation has completed and its statuses stand, fenced on
- * that generation still being the source's newest (its last completed one, or the one running).
- * Reads the page, its blocks and at most `RELATION_CANDIDATES_PER_PAGE`
- * other pages with theirs. Writes relation rows and `documentation.relation-proposed` on the
- * record of each employee that reads either page; no page's status, no plan and no cite changes.
- * It stops at `room` new proposals, which is what its sync has left of its cap, so the cap is the
- * most a sync proposes whatever its last page holds.
+ * The owner's other active pages one page a sync stored or changed is measured against
+ * (`candidatesOf`): the first step of its measure, a transaction of its own (D-12 (a)), so a
+ * candidate whose read breaks costs its own pair and not this. Internal; reads the page, its
+ * blocks, the owner's sources and the search's answers; writes nothing.
  *
- * @returns How many relations it proposed, and whether its room cut its candidates short.
+ * @returns Its candidates (none for a page that is gone or not current), or that the run is no
+ *   longer its source's running or last completed one.
  */
-export const measurePage = internalMutation({
-  args: {
-    sourceId: v.id('docSources'),
-    syncRunId: v.id('docSyncRuns'),
-    ref: v.string(),
-    /** The new proposals this call may still write; absent, every one its candidates hold. */
-    room: v.optional(v.number()),
-  },
-  handler: async (ctx, args): Promise<PageMeasure> => {
+export const pageCandidates = internalQuery({
+  args: { sourceId: v.id('docSources'), syncRunId: v.id('docSyncRuns'), ref: v.string() },
+  handler: async (ctx, args): Promise<PageCandidates> => {
     const source = await ctx.db.get(args.sourceId);
-    if (source === null) return { proposed: 0, cut: false };
-    if (source.activeSyncId !== args.syncRunId && source.lastCompletedSyncId !== args.syncRunId) {
-      return { proposed: 0, cut: false };
-    }
+    if (source === null || !measuresFor(source, args.syncRunId)) return { current: false };
     const page = await pageAt(ctx, args);
-    if (page === null || pageStatusOf(page) !== 'active') return { proposed: 0, cut: false };
+    if (page === null || pageStatusOf(page) !== 'active') return { current: true, candidates: [] };
     const sources = await ctx.db
       .query('docSources')
       .withIndex('by_user', (q) => q.eq('userId', source.userId))
       .take(CANDIDATE_SOURCES);
     const self = await measured(ctx, page, source);
+    return {
+      current: true,
+      candidates: await candidatesOf(ctx, { userId: source.userId, sources }, page, self.blocks),
+    };
+  },
+});
+
+/** What one pair's measure did. */
+export interface PairMeasure {
+  /** As `PageMeasure.current`. */
+  readonly current: boolean;
+  /** Whether it proposed a relation. */
+  readonly proposed: boolean;
+  /** Whether the candidate was passed over at `MEASURE_READ_BYTES`. */
+  readonly passedOver: boolean;
+}
+
+/**
+ * Measure one page a sync stored or changed against one candidate (D-12 (a)), and write a
+ * `proposed` relation where the measures relate them and the pair holds none yet. Internal; the
+ * measuring's action calls it a pair at a time (`docSyncActions.measurePage`), fenced on the run
+ * still being the source's newest (its last completed one, or the one running). Reads the two
+ * pages, their blocks and the relations between them, in one transaction of its own: a page whose
+ * read breaks throws the pairs that read it and no other, and the action names the pair. Writes
+ * the relation and `documentation.relation-proposed` on the record of each employee that reads
+ * either page; no page's status, no plan and no cite changes.
+ */
+export const measurePair = internalMutation({
+  args: {
+    sourceId: v.id('docSources'),
+    syncRunId: v.id('docSyncRuns'),
+    ref: v.string(),
+    candidate: pageNameValidator,
+  },
+  handler: async (ctx, args): Promise<PairMeasure> => {
+    const source = await ctx.db.get(args.sourceId);
+    if (source === null || !measuresFor(source, args.syncRunId)) {
+      return { current: false, proposed: false, passedOver: false };
+    }
+    const nothing: PairMeasure = { current: true, proposed: false, passedOver: false };
+    const page = await pageAt(ctx, args);
+    if (page === null || pageStatusOf(page) !== 'active') return nothing;
+    const otherSource = await ctx.db.get(args.candidate.sourceId);
+    // An owner's pages are measured against the owner's own only.
+    if (otherSource === null || otherSource.userId !== source.userId) return nothing;
+    const other = await pageAt(ctx, args.candidate);
+    if (other === null || pageStatusOf(other) !== 'active') return nothing;
     const own = storedPageReadBytes(page.markdown);
-    let read = own.row + own.blocks;
+    const cost = storedPageReadBytes(other.markdown);
+    if (own.row + own.blocks + cost.row + cost.blocks > MEASURE_READ_BYTES) {
+      log.warn(CANDIDATE_PASSED_OVER, {
+        sourceId: other.sourceId,
+        ref: other.ref,
+        bytes: cost.row + cost.blocks,
+        budget: MEASURE_READ_BYTES,
+        measuring: page.ref,
+      });
+      return { ...nothing, passedOver: true };
+    }
+    const self = await measured(ctx, page, source);
+    const relation = measureRelation(self, await measured(ctx, other, otherSource));
+    if (relation === undefined) return nothing;
+    if (await alreadyHeld(ctx, await relationsBetween(ctx, page, other), relation)) return nothing;
     const now = Date.now();
-    let proposed = 0;
-    for (const candidate of await candidatesOf(
-      ctx,
-      { userId: source.userId, sources },
-      page,
-      self.blocks,
-    )) {
-      if (proposed >= (args.room ?? RELATION_CANDIDATES_PER_PAGE)) return { proposed, cut: true };
-      const other = await pageAt(ctx, candidate);
-      const otherSource = sources.find((row) => row._id === candidate.sourceId);
-      if (other === null || otherSource === undefined || pageStatusOf(other) !== 'active') continue;
-      const cost = storedPageReadBytes(other.markdown);
-      if (read + cost.row + cost.blocks > MEASURE_READ_BYTES) {
-        read += cost.row;
-        log.warn(CANDIDATE_PASSED_OVER, {
-          sourceId: other.sourceId,
-          ref: other.ref,
-          bytes: cost.row + cost.blocks,
-          budget: MEASURE_READ_BYTES,
-          measuring: page.ref,
-        });
-        continue;
-      }
-      read += cost.row + cost.blocks;
-      const relation = measureRelation(self, await measured(ctx, other, otherSource));
-      if (relation === undefined) continue;
-      if (await alreadyHeld(ctx, await relationsBetween(ctx, page, other), relation)) continue;
-      const [from, to] = relation.from === self.key ? [page, other] : [other, page];
-      const relationId = await ctx.db.insert('docRelations', {
-        userId: source.userId,
-        from: { sourceId: from.sourceId, ref: from.ref },
-        to: { sourceId: to.sourceId, ref: to.ref },
-        kind: relation.kind,
-        evidence: relation.evidence.map((entry) => ({ ...entry })),
-        status: 'proposed',
+    const [from, to] = relation.from === self.key ? [page, other] : [other, page];
+    const relationId = await ctx.db.insert('docRelations', {
+      userId: source.userId,
+      from: { sourceId: from.sourceId, ref: from.ref },
+      to: { sourceId: to.sourceId, ref: to.ref },
+      kind: relation.kind,
+      evidence: relation.evidence.map((entry) => ({ ...entry })),
+      status: 'proposed',
+      createdAt: now,
+    });
+    const sourceOf = (row: Doc<'docPages'>): Doc<'docSources'> =>
+      row.sourceId === source._id ? source : otherSource;
+    for (const agent of await readersOfEither(ctx, [source, otherSource])) {
+      await appendEvent(ctx, {
+        agentId: agent._id,
+        type: 'documentation.relation-proposed',
+        payload: {
+          relationId,
+          kind: relation.kind,
+          from: named(from, sourceOf(from)),
+          to: named(to, sourceOf(to)),
+          evidence: relation.evidence.map(({ measure, value }) => ({ measure, value })),
+        },
         createdAt: now,
       });
-      const sourceOf = (row: Doc<'docPages'>): Doc<'docSources'> =>
-        row.sourceId === source._id ? source : otherSource;
-      for (const agent of await readersOfEither(ctx, [source, otherSource])) {
-        await appendEvent(ctx, {
-          agentId: agent._id,
-          type: 'documentation.relation-proposed',
-          payload: {
-            relationId,
-            kind: relation.kind,
-            from: named(from, sourceOf(from)),
-            to: named(to, sourceOf(to)),
-            evidence: relation.evidence.map(({ measure, value }) => ({ measure, value })),
-          },
-          createdAt: now,
-        });
-      }
-      proposed += 1;
     }
-    return { proposed, cut: false };
+    return { ...nothing, proposed: true };
   },
 });
 
@@ -587,6 +630,14 @@ async function answerConflictQuestions(
 const ASK_PLANS_PAGE = 10;
 
 /**
+ * The block lookups one step of the asking may spend on plans that read the whole mirror, each
+ * counted at the walk's own bound before it is read: one such plan a step, since ten of them were
+ * up to 24,000 lookups against a transaction's 4,096 index ranges (W17-R13). A plan that cites its
+ * blocks reads a few by them and is bound by {@link ASK_PLANS_PAGE} alone.
+ */
+const ASK_STEP_LOOKUPS = CONFLICT_WALK_LOOKUPS;
+
+/**
  * Start asking a confirmed conflict's question beside the drafted plans that rest on it, out of
  * the transaction that confirmed it (17-C; the pre-tag's second pass: the confirmation read a
  * hundred drafted plans a reader, each through `conflictsUnderPlan`, inside `decide`). Schedules
@@ -595,6 +646,7 @@ const ASK_PLANS_PAGE = 10;
 async function scheduleConfirmationAsks(
   ctx: MutationCtx,
   relation: Doc<'docRelations'>,
+  returned?: { readonly sourceId: Id<'docSources'>; readonly ref: string },
 ): Promise<void> {
   const [fromSource, toSource] = await Promise.all([
     ctx.db.get(relation.from.sourceId),
@@ -607,12 +659,16 @@ async function scheduleConfirmationAsks(
     relationId: relation._id,
     readers,
     cursor: null,
+    ...(returned === undefined
+      ? {}
+      : { returned: { sourceId: returned.sourceId, ref: returned.ref } }),
   });
 }
 
 /**
  * One step of asking a confirmed conflict's question beside the drafted plans that rest on it:
- * a page of the first reader's drafted plans, each read as its own decision reads it
+ * a page of the first reader's drafted plans, of which at most one read the whole mirror
+ * ({@link ASK_STEP_LOOKUPS}), each read as its own decision reads it
  * (`conflictsUnderPlan`): by its cites, or where it cites nothing by its kept selection (W16-R9).
  * Matching the plans that cite either page missed a plan that cites nothing, which was then asked
  * nothing and stopped after its approval; and it asked a plan citing another passage of either
@@ -625,8 +681,17 @@ export const askConfirmed = internalMutation({
     relationId: v.id('docRelations'),
     /** The employees whose drafted plans are still to be read, the first being read now. */
     readers: v.array(v.id('agents')),
-    /** Where in the first reader's drafted plans this step goes on from. */
-    cursor: v.union(v.string(), v.null()),
+    /**
+     * Where in the first reader's drafted plans this step goes on from: the creation time of the
+     * last plan an earlier step read, or null from the first. A string is the page cursor a step
+     * scheduled before 0.22.0 carries, read as it was written.
+     */
+    cursor: v.union(v.number(), v.string(), v.null()),
+    /**
+     * The page whose return to current asks again, where that is why (W17-R13): the thread's
+     * notice says the page is current again, not that the manager confirmed the conflict.
+     */
+    returned: v.optional(v.object({ sourceId: v.id('docSources'), ref: v.string() })),
   },
   handler: async (ctx, args): Promise<{ asked: number }> => {
     const [reader, ...rest] = args.readers;
@@ -635,17 +700,50 @@ export const askConfirmed = internalMutation({
       return { asked: 0 };
     }
     const agent = await ctx.db.get(reader);
-    const drafted =
+    const drafted = (after: number | null) =>
+      ctx.db.query('workItems').withIndex('by_agent_state', (q) => {
+        const pending = q.eq('agentId', reader).eq('state', 'plan-pending');
+        return after === null ? pending : pending.gt('_creationTime', after);
+      });
+    const page =
       agent === null
-        ? { page: [], isDone: true, continueCursor: '' }
-        : await ctx.db
-            .query('workItems')
-            .withIndex('by_agent_state', (q) => q.eq('agentId', reader).eq('state', 'plan-pending'))
-            .paginate({ numItems: ASK_PLANS_PAGE, cursor: args.cursor });
+        ? { rows: [], ended: true }
+        : typeof args.cursor === 'string'
+          ? await drafted(null)
+              .paginate({ numItems: ASK_PLANS_PAGE, cursor: args.cursor })
+              .then((read) => ({ rows: read.page, ended: read.isDone }))
+          : await drafted(args.cursor)
+              .take(ASK_PLANS_PAGE)
+              .then((rows) => ({ rows, ended: rows.length < ASK_PLANS_PAGE }));
     const now = Date.now();
+    const back = args.returned;
+    const isBack = (end: { sourceId: Id<'docSources'>; ref: string }): boolean =>
+      back !== undefined && end.sourceId === back.sourceId && end.ref === back.ref;
+    // Which of the question's two pages came back: they are named in the relation's order.
+    const returned =
+      relation === null
+        ? undefined
+        : isBack(relation.from)
+          ? 0
+          : isBack(relation.to)
+            ? 1
+            : undefined;
     let asked = 0;
-    for (const row of drafted.page) {
+    let lookups = 0;
+    let readTo: number | undefined;
+    let stopped = false;
+    for (const row of page.rows) {
       if (agent === null) break;
+      if (await planReadsWholeMirror(ctx, row)) {
+        // The walk's bound is spent before it is known what the walk costs: past the step's
+        // lookups, the plan is the next step's first.
+        if (lookups > 0 && lookups + CONFLICT_WALK_LOOKUPS > ASK_STEP_LOOKUPS) {
+          stopped = true;
+          break;
+        }
+        lookups += CONFLICT_WALK_LOOKUPS;
+      }
+      readTo = row._creationTime;
       const conflict = (await conflictsUnderPlan(ctx, row, agent)).find(
         (under) => under.relationId === args.relationId,
       );
@@ -654,16 +752,19 @@ export const askConfirmed = internalMutation({
         row,
         conflict: { ...conflict, relationId: args.relationId },
         now,
+        ...(returned === undefined ? {} : { returned }),
       });
       if (questionId !== null) asked += 1;
     }
-    const next = drafted.isDone
-      ? { readers: rest, cursor: null }
-      : { readers: args.readers, cursor: drafted.continueCursor };
+    const next =
+      page.ended && !stopped
+        ? { readers: rest, cursor: null }
+        : { readers: args.readers, cursor: readTo ?? null };
     if (next.readers.length > 0) {
       await ctx.scheduler.runAfter(0, internal.docRelations.askConfirmed, {
         relationId: args.relationId,
         ...next,
+        ...(back === undefined ? {} : { returned: back }),
       });
     }
     return { asked };
@@ -731,7 +832,8 @@ async function closeCardsOfReturnedPage(
  * next run. A page that came back starts the confirmation's asking again for each of its
  * confirmed conflicts that stands once more (F13: the relation stayed confirmed throughout, so no
  * `decide` asked, and a drafted plan resting on it was asked nothing until its approval stopped
- * it), and closes the status cards its leaving opened (W17-R2, `closeCardsOfReturnedPage`).
+ * it), and closes the status cards its leaving opened (W17-R2, `closeCardsOfReturnedPage`). A
+ * leaving's step reads the page again and closes nothing of one that is current by then (W17-R12).
  * Internal; schedules itself for the pages left.
  */
 export const turnPageQuestions = internalMutation({
@@ -751,6 +853,10 @@ export const turnPageQuestions = internalMutation({
     let asked = 0;
     for (const page of args.pages.slice(0, QUESTION_TURN_PAGES)) {
       if (!page.back) {
+        // Read again: a step that runs late, after the page came back and its conflicts were asked
+        // again, would close the questions its return asked (W17-R12). A page gone closes them.
+        const stored = await pageAt(ctx, page);
+        if (stored !== null && pageStatusOf(stored) === 'active') continue;
         closed += await closeQuestionsOnPage(ctx, page, now);
         continue;
       }
@@ -759,7 +865,7 @@ export const turnPageQuestions = internalMutation({
       await closeCardsOfReturnedPage(ctx, source, page.ref, now);
       for (const relation of await confirmedConflictsOfPages(ctx, source.userId, [page])) {
         if ((await standingConflictOf(ctx, relation)) === undefined) continue;
-        await scheduleConfirmationAsks(ctx, relation);
+        await scheduleConfirmationAsks(ctx, relation, page);
         asked += 1;
       }
     }
@@ -818,6 +924,10 @@ export interface RelationCardRow {
 /** The most cards of each kind one read of the tab draws. */
 export const RELATION_CARDS_READ = 20;
 
+/** Why a read of the cards is refused: it goes on from two places at once. */
+export const LIST_OPEN_ONE_CURSOR =
+  'A read of the cards goes on from the confirmed conflicts or from the proposals, not both.';
+
 /**
  * The most proposals one read of the tab looks through for the cards it draws: a proposal one of
  * whose pages is no longer current is passed over by a small row each, so such rows above a live
@@ -853,6 +963,12 @@ export interface RelationCardsRead {
    * no proposal.
    */
   readonly notShown: { readonly proposals: number; readonly atLeast: boolean };
+  /**
+   * Where the next read of the proposals goes on from (`proposalsBefore`: the creation time of the
+   * last proposal this read looked at), or null once no proposal stands past what it read (D-10's
+   * read-more). None on a read of the confirmed conflicts going on from a cursor.
+   */
+  readonly proposalsNext: number | null;
 }
 
 /**
@@ -864,33 +980,48 @@ export interface RelationCardsRead {
  * conflicts are read by page (`standingConflictsFrom`), so a conflict a plan's question asks
  * about has its card however many settled conflicts are newer: a read that stops short says where
  * the next goes on (`next`), and that read, given `conflictsBefore`, draws the confirmed
- * conflicts from there and no proposal. Writes nothing.
+ * conflicts from there and no proposal. The proposals past a read's twenty are read on the same
+ * way, by the manager's press (D-10's read-more): given `proposalsBefore` (an earlier read's
+ * `proposalsNext`), a read draws the next proposals from there and no confirmed conflict. Writes
+ * nothing.
  */
 export const listOpen = query({
   args: {
     /** Read only the confirmed conflicts, from where an earlier read's `next` said to go on. */
     conflictsBefore: v.optional(v.number()),
+    /** Read only the proposals, from where an earlier read's `proposalsNext` said to go on. */
+    proposalsBefore: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<RelationCardsRead> => {
     const caller = await getCallerOrThrow(ctx);
+    if (args.conflictsBefore !== undefined && args.proposalsBefore !== undefined) {
+      throw new ConvexError(LIST_OPEN_ONE_CURSOR);
+    }
     const readingOn = args.conflictsBefore !== undefined;
+    const proposalsOnly = args.proposalsBefore !== undefined;
+    const { proposalsBefore } = args;
     const [proposed, confirmed] = await Promise.all([
       readingOn
         ? []
         : ctx.db
             .query('docRelations')
-            .withIndex('by_user_status', (q) =>
-              q.eq('userId', caller.ownerKey).eq('status', 'proposed'),
-            )
+            .withIndex('by_user_status', (q) => {
+              const proposals = q.eq('userId', caller.ownerKey).eq('status', 'proposed');
+              return proposalsBefore === undefined
+                ? proposals
+                : proposals.lt('_creationTime', proposalsBefore);
+            })
             .order('desc')
             .take(PROPOSALS_READ),
       // The confirmed conflicts first: they hold plans, so the proposals' pages never spend the
       // read before them (W15-R22). The tab still draws the proposals above them.
-      standingConflictsFrom(ctx, caller.ownerKey, {
-        ...(args.conflictsBefore !== undefined ? { before: args.conflictsBefore } : {}),
-        most: RELATION_CARDS_READ,
-        bytes: CARD_PAGES_BYTES,
-      }),
+      proposalsOnly
+        ? { standing: [], next: null }
+        : standingConflictsFrom(ctx, caller.ownerKey, {
+            ...(args.conflictsBefore !== undefined ? { before: args.conflictsBefore } : {}),
+            most: RELATION_CARDS_READ,
+            bytes: CARD_PAGES_BYTES,
+          }),
     ]);
     let bytes = 0;
     const conflictCards: RelationCardRow[] = confirmed.standing.map((standing) => {
@@ -953,6 +1084,14 @@ export const listOpen = query({
         ],
       });
     }
+    // The next read of the proposals goes on past the last one this read looked at; one that
+    // looked at none (the confirmed conflicts spent its bytes) starts where this one did.
+    const more = looked < proposed.length || proposed.length === PROPOSALS_READ;
+    const proposalsNext = !more
+      ? null
+      : looked === 0
+        ? (proposalsBefore ?? Number.MAX_SAFE_INTEGER)
+        : proposed[looked - 1]._creationTime;
     return {
       cards: [...cards, ...conflictCards],
       next: confirmed.next,
@@ -960,6 +1099,7 @@ export const listOpen = query({
         proposals: proposed.length - looked,
         atLeast: proposed.length === PROPOSALS_READ,
       },
+      proposalsNext,
     };
   },
 });

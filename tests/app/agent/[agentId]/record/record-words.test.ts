@@ -538,6 +538,26 @@ describe('recordWords', (): void => {
     );
   });
 
+  it('says a plan a card’s Approve asked again, not drafted again, in section 7’s words (D-2 (b), RM24)', (): void => {
+    expect(
+      recordWords(
+        {
+          type: 'work.plan-held',
+          payload: {
+            workItemId: 'w1',
+            reason: 'held-through-change',
+            reorientationId: 'r1',
+            summary:
+              'Ines Duarte, its approver: now for “NetLedger journal changes and REVOPS close plans”.',
+          },
+        },
+        subject,
+      ),
+    ).toBe(
+      'The plan for “Draft response for new tier-two RevOps ask” is asked for your decision again: the change to ‘Ines Duarte, its approver: now for “NetLedger journal changes and REVOPS close plans”’ does not affect it.',
+    );
+  });
+
   it('says a plan approved under autonomous actions was not the manager pressing Approve', (): void => {
     expect(
       recordWords({ type: 'work.plan-approved', payload: { by: 'autonomous' } }, { name: 'Mira' }),
@@ -1187,6 +1207,8 @@ describe('a charter amended from a reorientation card, in the record (the joins)
 });
 
 describe('a card a fan-out could not open, in the record (wave 17, 17-O; W16-R23)', (): void => {
+  // The reason is the fixed sentence whatever the event stored: one written by 0.21.0 held the
+  // error's first line through the token scrub only (W17-R8).
   it('says which card could not be opened and why, so the change is not lost unsaid', (): void => {
     expect(
       recordWords(
@@ -1202,7 +1224,7 @@ describe('a card a fan-out could not open, in the record (wave 17, 17-O; W16-R23
         subject,
       ),
     ).toBe(
-      'Day0 could not open a reorientation card for Mira (the card could not be written): “Escalation paths” was archived.',
+      'Day0 could not open a reorientation card for Mira (an error stopped it, and the function log has the details): “Escalation paths” was archived.',
     );
   });
 });
@@ -1620,7 +1642,7 @@ describe('recordWords: a working agreement refused for every employee (14-FX, W1
         subject,
       ),
     ).toBe(
-      'A working agreement is not in effect for every employee: you have more than 50 employees.',
+      'A working agreement is not in effect for every employee: you have more than 60 employees.',
     );
     expect(
       recordWords(

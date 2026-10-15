@@ -244,60 +244,63 @@ export function employeePage(): Record<string, unknown> {
         },
       ],
     },
-    'work:listForAgent': [
-      item('w-plan', 'Close REVOPS-9 with the close summary', {
-        state: 'plan-pending',
-        plan,
-        planPendingAt: minutes(6),
-      }),
-      item('w-held', 'Send the delay notice for REVOPS-12', {
-        state: 'actions-pending',
-        plan,
-        pendingRunId: 'run-1',
-        output: { draft: 'Draft ready.', notes: '', actions: [dm] },
-        actionVerdicts: [{ disposition: 'held', reason: 'system-of-record mutation held' }],
-      }),
-      item('w-unknown', 'Update the forecast tile', {
-        state: 'failed',
-        plan,
-        skipReason: 'a write may have landed',
-        output: {
-          draft: 'd',
-          notes: '',
-          actions: [dm],
-          applied: [
-            {
-              tool: 'http.request',
-              ok: false,
-              outcomeUnknown: true,
-              reason: 'socket closed after the request',
-              idempotencyKey: 'w-unknown:run:0',
-            },
-          ],
-        },
-      }),
-      item('w-question', 'Notify the customer of the delay', {
-        state: 'failed',
-        plan,
-        skipReason: `stopped: ${openQuestionStopReason({ question, steps: [2] })}`,
-        output: {
-          draft: '',
-          notes: '',
-          actions: [],
-          applied: [],
-          openQuestion: { question, steps: [2] },
-        },
-      }),
-      item('w-skipped', 'Refresh the payroll export', {
-        state: 'skipped',
-        verdict: { decision: 'skip', reason: 'already-claimed: state=executing' },
-      }),
-      item('w-done', 'Post the weekly pipeline summary', {
-        state: 'completed',
-        plan,
-        output: { draft: 'd', notes: '', actions: [] },
-      }),
-    ],
+    'work:listForAgent': {
+      items: [
+        item('w-plan', 'Close REVOPS-9 with the close summary', {
+          state: 'plan-pending',
+          plan,
+          planPendingAt: minutes(6),
+        }),
+        item('w-held', 'Send the delay notice for REVOPS-12', {
+          state: 'actions-pending',
+          plan,
+          pendingRunId: 'run-1',
+          output: { draft: 'Draft ready.', notes: '', actions: [dm] },
+          actionVerdicts: [{ disposition: 'held', reason: 'system-of-record mutation held' }],
+        }),
+        item('w-unknown', 'Update the forecast tile', {
+          state: 'failed',
+          plan,
+          skipReason: 'a write may have landed',
+          output: {
+            draft: 'd',
+            notes: '',
+            actions: [dm],
+            applied: [
+              {
+                tool: 'http.request',
+                ok: false,
+                outcomeUnknown: true,
+                reason: 'socket closed after the request',
+                idempotencyKey: 'w-unknown:run:0',
+              },
+            ],
+          },
+        }),
+        item('w-question', 'Notify the customer of the delay', {
+          state: 'failed',
+          plan,
+          skipReason: `stopped: ${openQuestionStopReason({ question, steps: [2] })}`,
+          output: {
+            draft: '',
+            notes: '',
+            actions: [],
+            applied: [],
+            openQuestion: { question, steps: [2] },
+          },
+        }),
+        item('w-skipped', 'Refresh the payroll export', {
+          state: 'skipped',
+          verdict: { decision: 'skip', reason: 'already-claimed: state=executing' },
+        }),
+        item('w-done', 'Post the weekly pipeline summary', {
+          state: 'completed',
+          plan,
+          output: { draft: 'd', notes: '', actions: [] },
+        }),
+      ],
+      cut: false,
+    },
     'managerQuestions:openForAgent': [],
     // The card and the plan's question (16-O), so the floor measures both in each theme.
     'managerQuestions:conflictsForAgent': [
@@ -648,6 +651,7 @@ export function home(): Record<string, unknown> {
   return {
     // The home reads its roster by pages (wave 17, 17-F); the stub answers one exhausted page.
     'roster:page': roster,
+    // The home reads its inbox by pages too (wave 18, 18-F); the stub answers the one last page.
     'work:needsYou': {
       total: 2,
       entries: (employeePage()['work:needsYouForAgent'] as { entries: unknown[] }).entries,
@@ -656,6 +660,8 @@ export function home(): Record<string, unknown> {
         { agentId: 'agent-2', waiting: 0 },
         { agentId: 'agent-3', waiting: 0 },
       ],
+      isDone: true,
+      continueCursor: '',
     },
     'metrics:forOwner': {
       employees: roster.map(employee),

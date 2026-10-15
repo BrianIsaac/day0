@@ -1,6 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import { PassThrough } from 'node:stream';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Id } from '../../../../convex/_generated/dataModel';
 import { ListingChangedError, type ReadPageBatch } from '../../../../src/docs/readers/batch';
 import { pinnedPageFetch, type PageRequest } from '../../../../src/docs/readers/page-address';
@@ -17,7 +17,12 @@ import {
 } from '../../../fixtures/readers/fake';
 import { THOUSAND_PAGE_REQUESTS } from '../../../fixtures/readers/guide-counts';
 import { libraryFake, type LibraryFake } from '../../../fixtures/readers/library';
-import { readWhole, storedIn, type StoredMarks } from '../../../fixtures/readers/stored';
+import {
+  readWhole,
+  storedIn,
+  storeRedactedTitle,
+  type StoredMarks,
+} from '../../../fixtures/readers/stored';
 
 /** 10 October 2026, 09:00 UTC: the clock every test starts at. */
 const T0 = Date.UTC(2026, 9, 10, 9, 0, 0);
@@ -651,11 +656,14 @@ describe("a SharePoint page's date (wave 17, D-8)", (): void => {
 });
 
 /** A reader on a generated library, its clock still. */
-function readerOnLibrary(library: LibraryFake): SharePointReader {
+function readerOnLibrary(
+  library: LibraryFake,
+  now: () => number = (): number => T0,
+): SharePointReader {
   return new SharePointReader({
     fetch: library.fetch,
     download: library.fetch,
-    now: (): number => T0,
+    now,
     sleep: async (): Promise<void> => undefined,
   });
 }
@@ -676,40 +684,45 @@ describe('the SharePoint reader contract by revision (wave 17, 17-X)', (): void 
     const library = libraryFake('sharepoint', { pages: 1_000, sitePages: 40 });
     const reader = readerOnLibrary(library);
     const marks: StoredMarks = new Map();
-    const first = await readWhole(reader, site, SECRET, marks);
+    const clock = { now: (): number => T0 };
+    const first = await readWhole(reader, site, SECRET, marks, clock);
     expect(first.read).toHaveLength(1_000);
     expect(library.counts().bodies).toBe(1_000);
     // The whole first read, as the guide prints it.
     expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.sharepoint.first);
 
     library.reset();
-    const unchanged = await readWhole(reader, site, SECRET, marks);
+    const unchanged = await readWhole(reader, site, SECRET, marks, clock);
     expect(unchanged.read).toEqual([]);
     expect(unchanged.unread).toEqual([]);
     expect(unchanged.kept).toHaveLength(1_000);
     // The delta's 961 items (the root folder and the files) are 39 listing pages of 25 and the
-    // site's 40 pages two; each batch signs in once, and the first looks the site up.
-    expect(library.counts()).toEqual({ token: 41, lookup: 1, listing: 41, body: 0, bodies: 0 });
+    // site's 40 pages two; the first batch signs in and looks the site up, and every later batch
+    // reads with the token it handed back (X-1; wave 18, 18-X).
+    expect(library.counts()).toEqual({ token: 1, lookup: 1, listing: 41, body: 0, bodies: 0 });
     expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.sharepoint.unchanged);
     expect(unchanged.batches).toBe(41);
+    expect(unchanged.handedBack).toEqual([
+      { token: 'fixture-graph-token', expiresAt: T0 + 3_599_000 },
+    ]);
 
     library.edit(500);
     library.reset();
-    const edited = await readWhole(reader, site, SECRET, marks);
+    const edited = await readWhole(reader, site, SECRET, marks, clock);
     expect(edited.read.map((page) => page.ref)).toEqual([fileRef(500)]);
     expect(edited.read[0].markdown).toContain('Edited 1.');
     expect(edited.kept).toHaveLength(999);
     // A file costs the redirect and the download.
-    expect(library.counts()).toEqual({ token: 41, lookup: 1, listing: 41, body: 2, bodies: 1 });
+    expect(library.counts()).toEqual({ token: 1, lookup: 1, listing: 41, body: 2, bodies: 1 });
     expect(library.requests).toHaveLength(THOUSAND_PAGE_REQUESTS.sharepoint.oneChanged);
 
     library.edit(980);
     library.reset();
-    const pageEdited = await readWhole(reader, site, SECRET, marks);
+    const pageEdited = await readWhole(reader, site, SECRET, marks, clock);
     expect(pageEdited.read.map((page) => page.ref)).toEqual([pageRef(980)]);
     expect(pageEdited.kept).toHaveLength(999);
     // A site page costs one request.
-    expect(library.counts()).toEqual({ token: 41, lookup: 1, listing: 41, body: 1, bodies: 1 });
+    expect(library.counts()).toEqual({ token: 1, lookup: 1, listing: 41, body: 1, bodies: 1 });
   });
 
   it('asks each listing for the fields it reads, and the contract once a listing page before any body', async (): Promise<void> => {
@@ -759,6 +772,24 @@ describe('the SharePoint reader contract by revision (wave 17, 17-X)', (): void 
     expect(library.counts().body).toBe(0);
   });
 
+  it('keeps a site page whose stored title is redacted by its listed title’s keyed hash, and reads it once renamed (wave 18, 18-X)', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 30, sitePages: 5 });
+    const reader = readerOnLibrary(library);
+    const marks: StoredMarks = new Map();
+    await readWhole(reader, site, SECRET, marks);
+    // The title held a value the sync redacts: stored redacted, its listed form's hash beside it.
+    storeRedactedTitle(marks, pageRef(27));
+    library.reset();
+    const again = await readWhole(reader, site, SECRET, marks);
+    expect(again.read).toEqual([]);
+    expect(again.kept).toHaveLength(30);
+    expect(library.counts().body).toBe(0);
+
+    library.rename(27, 'Rotate the payroll key');
+    const renamed = await readWhole(reader, site, SECRET, marks);
+    expect(renamed.read.map((page) => page.ref)).toEqual([pageRef(27)]);
+  });
+
   it('keeps a Word document whose file name the store writes otherwise (the second pass)', async (): Promise<void> => {
     const listing = JSON.parse(
       new TextDecoder().decode(fixtureBytes('sharepoint', 'delta-1.json')),
@@ -774,11 +805,11 @@ describe('the SharePoint reader contract by revision (wave 17, 17-X)', (): void 
         : undefined,
     );
     const marks: StoredMarks = new Map();
-    const first = await readWhole(reader, site, SECRET, marks, 3);
+    const first = await readWhole(reader, site, SECRET, marks, { limit: 3 });
     expect(first.read.find((page) => page.ref === 'file-01ESCAL')?.title).toBe('Escalation  paths');
     expect(marks.get('file-01ESCAL')?.title).toBe('Escalation paths');
     requests.length = 0;
-    const again = await readWhole(reader, site, SECRET, marks, 3);
+    const again = await readWhole(reader, site, SECRET, marks, { limit: 3 });
     expect(again.kept.map((page) => page.ref)).toContain('file-01ESCAL');
     expect(walked(requests).filter((line) => line.includes('01ESCAL'))).toEqual([]);
   });
@@ -976,5 +1007,145 @@ describe('the SharePoint reader contract by revision (wave 17, 17-X)', (): void 
     const again = await reader.listPageBatch(site, SECRET, undefined, 25, storedIn(marks));
     expect(again.pages.map((page) => page.ref)).toEqual([fileRef(2)]);
     expect(again.kept?.map((page) => page.ref)).toEqual([fileRef(0), fileRef(1), fileRef(3)]);
+  });
+});
+
+describe("the SharePoint reader's token across a sync's batches (wave 18, 18-X; X-1)", (): void => {
+  /** A token an earlier batch handed back that Graph no longer takes (revoked, or lapsed early). */
+  const REVOKED = { token: 'revoked-graph-token', expiresAt: T0 + 3_000_000 };
+
+  it('asks for a token again mid-sync once the one it holds is past its expiry, and hands the new one back', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 100 });
+    let clock = T0;
+    const reader = readerOnLibrary(library, (): number => clock);
+    const marks: StoredMarks = new Map();
+    const one = await reader.listPageBatch(site, SECRET, undefined, 25, storedIn(marks));
+    expect(one.token).toEqual({ token: 'fixture-graph-token', expiresAt: T0 + 3_599_000 });
+    const two = await reader.listPageBatch(
+      site,
+      SECRET,
+      one.nextCursor,
+      25,
+      storedIn(marks),
+      one.token,
+    );
+    // Read with the token handed back: none asked for, none handed back (the sync keeps it).
+    expect(two.pages).toHaveLength(25);
+    expect(two.token).toBeUndefined();
+    expect(library.counts().token).toBe(1);
+
+    // A minute before Graph's 3,599 s are up: inside the margin, so the token is not used.
+    clock = T0 + 3_599_000 - 60_000;
+    const three = await reader.listPageBatch(
+      site,
+      SECRET,
+      two.nextCursor,
+      25,
+      storedIn(marks),
+      one.token,
+    );
+    expect(three.pages).toHaveLength(25);
+    expect(three.token).toEqual({ token: 'fixture-graph-token', expiresAt: clock + 3_599_000 });
+    expect(library.counts().token).toBe(2);
+  });
+
+  it('asks for a token again when Graph refuses the one handed back, and reads the batch on', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 30 });
+    const reader = readerOnLibrary(library);
+    const batch = await reader.listPageBatch(site, SECRET, undefined, 25, undefined, REVOKED);
+    // The first delta page's 25 items hold the library's root folder and 24 files.
+    expect(batch.pages).toHaveLength(24);
+    expect(batch.token).toEqual({ token: 'fixture-graph-token', expiresAt: T0 + 3_599_000 });
+    // The site's lookup refused under the handed token, then a sign-in, then the lookup again.
+    expect(library.requests.slice(0, 3).map((request) => [request.kind, request.status])).toEqual([
+      ['lookup', 401],
+      ['token', 200],
+      ['lookup', 200],
+    ]);
+    expect(library.counts().token).toBe(1);
+  });
+
+  it('hands back an expired token where a renewal names no lifetime, so the sync drops the refused one (the second pass)', async (): Promise<void> => {
+    const { reader } = readerOnTenant((request) =>
+      request.method === 'POST'
+        ? json(200, { token_type: 'Bearer', access_token: 'fixture-graph-token' })
+        : undefined,
+    );
+    const batch = await reader.listPageBatch(site, SECRET, undefined, 25, undefined, REVOKED);
+    expect(batch.pages.length).toBeGreaterThan(0);
+    // Past the margin already: the sync seals none, and the next batch asks afresh.
+    expect(batch.token).toEqual({ token: 'fixture-graph-token', expiresAt: T0 });
+  });
+
+  it('asks for no new token when Graph refuses one the batch asked for itself, and says what IT grants (the second pass)', async (): Promise<void> => {
+    const { reader, requests } = readerOnTenant((request) =>
+      request.method === 'GET' &&
+      request.url.pathname === '/v1.0/sites/acme.sharepoint.com:/sites/Runbooks'
+        ? json(401, fixtureJsonWithout('sharepoint', 'unauthorised.json'))
+        : undefined,
+    );
+    await expect(reader.listPageBatch(site, SECRET, undefined, 25)).rejects.toThrow(
+      'Microsoft Graph refused the app this call (HTTP 401, InvalidAuthenticationToken)',
+    );
+    expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
+  });
+
+  it('says the sign-in’s own refusal, with no token in it, when asking again for a refused one fails (the second pass)', async (): Promise<void> => {
+    const { reader } = readerOnTenant((request) =>
+      request.method === 'POST'
+        ? json(401, fixtureJsonWithout('sharepoint', 'token-refused.json'))
+        : undefined,
+    );
+    const refusal: unknown = await reader
+      .listPageBatch(site, SECRET, undefined, 25, undefined, REVOKED)
+      .catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(Error);
+    const message = (refusal as Error).message;
+    expect(message).toContain('Microsoft refused the app registration this source reads as');
+    expect(message).not.toContain(REVOKED.token);
+    expect(message).not.toContain('fixture-graph-token');
+  });
+
+  it('asks for no new token when the download address Graph names refuses a file: the refusal is that file’s (the second pass)', async (): Promise<void> => {
+    const { reader, requests } = readerOnTenant((request) =>
+      request.url.host === 'acme.sharepoint.com' ? new Response('', { status: 401 }) : undefined,
+    );
+    const handed = { token: 'fixture-graph-token', expiresAt: T0 + 3_000_000 };
+    const batch = await reader.listPageBatch(site, SECRET, undefined, 25, undefined, handed);
+    expect(batch.unread.map((page) => page.reason)).toContain(
+      'acme.sharepoint.com answered HTTP 401 for "close-the-quarter.md"; re-sync to try again.',
+    );
+    expect(requests.filter((request) => request.method === 'POST')).toEqual([]);
+    expect(batch.token).toBeUndefined();
+  });
+
+  it('never puts the token it hands back, or the one it was handed, in a log line or a cursor', async (): Promise<void> => {
+    const library = libraryFake('sharepoint', { pages: 60, sitePages: 10 });
+    const reader = readerOnLibrary(library);
+    const lines: string[] = [];
+    const cursors: string[] = [];
+    const logged = vi.spyOn(console, 'log').mockImplementation((line: unknown): void => {
+      lines.push(String(line));
+    });
+    try {
+      const first = await reader.listPageBatch(site, SECRET, undefined, 25, undefined, REVOKED);
+      let cursor = first.nextCursor;
+      let token = first.token;
+      while (cursor !== undefined) {
+        cursors.push(cursor);
+        const batch = await reader.listPageBatch(site, SECRET, cursor, 25, undefined, token);
+        token = batch.token ?? token;
+        cursor = batch.nextCursor;
+      }
+    } finally {
+      logged.mockRestore();
+    }
+    // The refusal of the handed token is logged, by the provider and the source alone.
+    expect(lines.some((line) => line.includes('token refused'))).toBe(true);
+    expect(cursors.length).toBeGreaterThan(1);
+    for (const said of [...lines, ...cursors]) {
+      expect(said).not.toContain('fixture-graph-token');
+      expect(said).not.toContain(REVOKED.token);
+    }
   });
 });

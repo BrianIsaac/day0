@@ -1,22 +1,22 @@
 # Reading a Confluence space
 
-This page is for the IT administrator who makes the credential day0 reads with, and the manager
-who links the space on the Documentation page. day0 reads one Confluence space and keeps each
+This page is for the IT administrator who makes the credential Day0 reads with, and the manager
+who links the space on the Documentation page. Day0 reads one Confluence space and keeps each
 page as Markdown beside the team's other documentation. It only reads: it writes nothing to
 Confluence. There are two kinds, one for each Confluence:
 
-- **Confluence Cloud** (`<your site>.atlassian.net`): day0 reads as a **service account**, with a
+- **Confluence Cloud** (`<your site>.atlassian.net`): Day0 reads as a **service account**, with a
   scoped API token, through Atlassian's gateway at `api.atlassian.com`.
-- **Confluence Data Center** (your own server): day0 reads with a **personal access token**, at
+- **Confluence Data Center** (your own server): Day0 reads with a **personal access token**, at
   your server's own address. Atlassian ends Data Center on **28 March 2029**: no new Data Center
   subscription has been sold since 30 March 2026, an existing customer may add to theirs until
   30 March 2028, and after 28 March 2029 the product is read-only. Plan the move to Cloud inside
-  that time; day0 reads either.
+  that time; Day0 reads either.
 
 A space can also be read through Atlassian's MCP server (the **MCP server** kind). Use one or the
 other for a space, not both.
 
-## What day0 reads
+## What Day0 reads
 
 - Every page of the space, converted from Confluence's storage format to Markdown under the
   page's own title: headings, lists, tables, code blocks (with their language), information
@@ -30,24 +30,26 @@ other for a space, not both.
   not say it does: where it does not, archived pages are simply not read.
 - A page Confluence gives no body for is named as not read.
 - The space is read again on the same schedule as every other source. When Confluence says it is
-  busy (HTTP 429, or 503), day0 waits the time Confluence names before it asks again.
+  busy (HTTP 429, or 503), Day0 waits the time Confluence names before it asks again.
 
 ## What a read asks of Confluence
 
-day0 lists the space at every read, twenty-five pages a request, without the pages' text, and
-asks for a page's text only when its listing says it changed since day0 last read it: its
-version number moved, or its title or address did. A read that finds nothing changed therefore
-asks for no page's text. On **Cloud** the pages of one listing that changed are asked for
-together, by their ids, in one request; on **Data Center** each page that changed is asked for by
-its id, a request a page. One exception: a page whose title holds a value day0 takes out of what
-it stores (a password written into a title) is asked for at every read, because the title it was
-stored under is no longer the one its listing gives. Another: a page with no text under its
-title, such as a parent page that holds only a children or include macro, is asked for at every
-read and then kept by its text, since a listing's version is kept only for a page with text to
-keep.
+Day0 lists the space at every read, twenty-five pages a request, without the pages' text, and asks
+for a page's text only when its listing says it changed since Day0 last read it: its version number
+moved, or its title or address did. A read that finds nothing changed therefore asks for no page's
+text. On **Cloud** the pages of one listing that changed are asked for together, by their ids, in
+one request; on **Data Center** each page that changed is asked for by its id, a request a page. A
+page whose title holds a value Day0 takes out of what it stores (a password written into a title) is
+stored under the title with that value taken out, and beside it a fingerprint of the title its
+listing gave, keyed with Day0's credential key so it gives nothing of the value away; a later read
+keeps the page by that fingerprint. One exception: such a page is asked for once more after an
+upgrade from 0.21.0 and after the credential key changes, to take its fingerprint again. Another: a
+page with no text under its title, such as a parent page that holds only a children or include
+macro, is asked for at every read and then kept by its text, since a listing's version is kept only
+for a page with text to keep.
 
-Counted on the test doubles of Confluence that day0's own tests use, not on a site. The bed is a
-running day0 in real mode reading a space of 250 pages; the thousand-page figures are the same
+Counted on the test doubles of Confluence that Day0's own tests use, not on a site. The bed is a
+running Day0 in real mode reading a space of 250 pages; the thousand-page figures are the same
 doubles read by the readers' tests:
 
 | Read                          | Cloud, 250 pages (the bed) | Cloud, 1,000 pages (the tests) | Data Center, 250 pages (the bed) | Data Center, 1,000 pages (the tests) |
@@ -62,19 +64,19 @@ pages and one request for its archived pages; the first read adds a request for 
 
 Atlassian's page on rate limiting (last updated 12 October 2026) says the points-based limits of
 March 2026 apply to Forge, Connect and OAuth 2.0 apps, and that traffic with an API token, which
-is how day0 reads Cloud, stays under the existing burst limits; it publishes no figure for
+is how Day0 reads Cloud, stays under the existing burst limits; it publishes no figure for
 those. A Data Center server's limits are whatever its administrator has set.
 
 ## 1a. Confluence Cloud: the service account (IT)
 
 1. In **Atlassian Administration** (`admin.atlassian.com`), create a **service account** for
-   day0, and give it access to Confluence.
-2. In the space, give the service account **View** permission. day0 needs no other.
+   Day0, and give it access to Confluence.
+2. In the space, give the service account **View** permission. Day0 needs no other.
 3. For the service account, choose **Create credentials**, then **API token**. Name it, set its
    expiry (a token lasts at most 365 days, so note when to replace it), and choose these scopes
    and no others:
 
-   | Scope                   | What day0 uses it for                 |
+   | Scope                   | What Day0 uses it for                 |
    | ----------------------- | ------------------------------------- |
    | `read:space:confluence` | Finding the space by its key          |
    | `read:page:confluence`  | Listing and reading the space's pages |
@@ -105,7 +107,7 @@ On the Documentation page, under **Link a documentation location**:
 2. **Location label**: a name your team recognises, for example `Operations wiki`.
 3. **Where it is**: for Cloud, the space's key (`OPS`) or its address as your browser shows it;
    for Data Center, the space's address on your server
-   (`https://wiki.acme.corp/display/OPS`). day0 keeps only the space: for Cloud,
+   (`https://wiki.acme.corp/display/OPS`). Day0 keeps only the space: for Cloud,
    `https://api.atlassian.com/ex/confluence/<cloud ID>/wiki/spaces/OPS`.
 4. For Cloud, **Cloud ID** and **API token**; for Data Center, **Personal access token**. The
    token is encrypted when you submit the form, sent only to Atlassian (Cloud) or to your own
@@ -118,14 +120,14 @@ only.
 
 ## What a source that cannot be read shows
 
-A page day0 does not read is named on the source's row with its reason:
+A page Day0 does not read is named on the source's row with its reason:
 
 - `Confluence gave no body in its storage format for "Quarter board", so Day0 does not read it.`
 - `"Quarter board" was deleted or moved in Confluence after it was listed.` The page went between
-  day0's listing of the space and its request for the page; the next read sorts it out.
+  Day0's listing of the space and its request for the page; the next read sorts it out.
 - `Confluence listed "Escalation paths (2024)" among its archived pages and then answered HTTP 400
 for the page itself, so Day0 keeps what it last read of it.` Data Center only: the server lists
-  its archived pages and does not give one by its id. Tell the day0 maintainers which Confluence
+  its archived pages and does not give one by its id. Tell the Day0 maintainers which Confluence
   version it is.
 
 When the whole space cannot be read, its status says why. On Confluence Cloud:
@@ -158,7 +160,7 @@ not read it.` Step 1b's third point.
 
 On either:
 
-- `Confluence was rate limited (HTTP 429).` Confluence stayed busy past day0's waits; the next
+- `Confluence was rate limited (HTTP 429).` Confluence stayed busy past Day0's waits; the next
   read tries again.
 - `Day0 could not reach api.atlassian.com: ...` Nothing answered at that host from the machine
   the backend runs on. See the next section.
@@ -181,7 +183,7 @@ Until one is, these are known only from the reference: that a service account's 
 reads a space as described; what Atlassian's gateway answers for a wrong token or cloud ID; the
 shapes of the macros in a page's storage format beyond the common ones; whether a Data Center
 server lists its archived pages, and, where it lists one, whether it gives that page by its id
-(where it does not, the page is named as not read and what day0 last read of it stands); and
+(where it does not, the page is named as not read and what Day0 last read of it stands); and
 that Cloud answers several pages asked for by id in one request as the specification describes.
-The request counts above are from day0's own test doubles. If a first install finds any of them
-different, tell the day0 maintainers so this page can say what is true.
+The request counts above are from Day0's own test doubles. If a first install finds any of them
+different, tell the Day0 maintainers so this page can say what is true.

@@ -19,6 +19,7 @@ import {
   openTestCard,
   runCardChain,
   scheduledAs,
+  shownOf,
   seedEmployee,
   seedWork,
   type Harness,
@@ -473,9 +474,9 @@ describe('a page whose status opened a card is current again (W17-R2, D-1 (a))',
       recovery: true,
     });
     await expect(
-      harness.withIdentity(OWNER).mutation(api.reorientationDecisions.approve, {
-        reorientationId: card._id,
-      }),
+      harness
+        .withIdentity(OWNER)
+        .mutation(api.reorientationDecisions.approve, await shownOf(harness, card._id)),
     ).rejects.toThrow('That card has already been decided.');
   });
 
