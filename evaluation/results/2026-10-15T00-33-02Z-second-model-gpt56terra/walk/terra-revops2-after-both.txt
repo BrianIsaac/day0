@@ -1,0 +1,7 @@
+REVOPS-2 state=actions-pending
+skip: None
+  action 0: mcp.call save_comment  | {"issueId":"REVOPS-2","body":"Work done: The Q3 accrual review is complete. Evidence read: Sam’s ticket request. Unknowns: supporting review evidence was not supplied."} | applied: None
+  action 1: mcp.call save_issue  | {"id":"REVOPS-2","state":"Done"} | applied: None
+  notes: "Manager feedback authorises the short audit comment and Done transition; both Linear writes remain subject to the exact-action gate."
+  workDone: "done"
+retryFeedback: None | managerFeedback: {'at': 1792025235555, 'kind': 'retry-note', 'reason': 'Go ahead with the comment and the status change now; keep the comment short.'}

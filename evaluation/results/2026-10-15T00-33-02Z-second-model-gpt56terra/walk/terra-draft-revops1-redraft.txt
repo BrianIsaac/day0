@@ -1,0 +1,13 @@
+REVOPS-1 state=plan-pending skip=
+summary: Prepare and hold a short Linear audit comment, then move REVOPS-1 to Done only after the manager literally approves each write. The comment will record Sam’s completion report and the unavailable NetLedger evidence path.
+  step 1: Draft the manager facing summary of the proposed audit comment and Done change, and flag that NetLedger evidence cannot be read because no approved connected access path is available.
+  step 2: After literal manager approval, post a short audit comment on REVOPS-1. The comment will record Sam’s report that the reconciliation is finished, state that no NetLedger evidence was read, and name the evidence and values as unknown.
+  step 3: After the approved audit comment posts, and after literal manager approval of this separate action, change REVOPS-1 to Done.
+  cite step 1: Systems folder/netledger.md#NetLedger
+  cite step 2: Revops folder/runbooks/close-comment-limits.md#Close comment limits > Comment length
+  cite step 2: Policies folder/close-comment-limits.md#Close comment limits > Comment length
+  cite step 2: Revops folder/runbooks/close-comment-limits.md#Close comment limits > What a comment carries
+  cite step 2: Policies folder/close-comment-limits.md#Close comment limits > What a comment carries
+risk: NetLedger is declared but has no connected approved access path. The reconciliation evidence and values cannot be verified, so the audit comment will preserve that limitation. The proposed comment is at most 60 words, which satisfies both conflicting documented limits without choosing between them.
+obligations: [('report', []), ('conditional-write', ['linear']), ('conditional-write', ['linear'])] conditional-on-manager
+selectedBlocks: 40 decision: pgr4eu

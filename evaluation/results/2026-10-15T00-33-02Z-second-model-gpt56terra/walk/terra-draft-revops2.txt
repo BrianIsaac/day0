@@ -1,0 +1,24 @@
+REVOPS-2 state=plan-pending skip=
+summary: Send the manager a draft for the accrual review ticket, then, after literal approval, add a short audit comment and move the ticket to Done. The comment will remain within 60 words, so it complies with both conflicting comment limits without selecting either one.
+  step 1: Send the manager DM with the proposed audit comment, the proposed Done transition, and the risk that no supporting review evidence was supplied. Read the manager DM channel identifier from Slack. This DM lands now.
+  step 2: After the manager literally approves the payload, add a top level audit comment to the originating Linear ticket. Keep it within 60 words, state that the review is complete, identify Sam’s ticket request as the evidence read, and state that supporting review evidence was not supplied. The Linear write is held for literal manager approval.
+  step 3: After the approved audit comment posts, change the originating Linear ticket state to Done. The Linear write is held for literal manager approval.
+  cite step 1: Revops folder/runbooks/how-to-post-slack.md#How to post to Slack > Action shape
+  cite step 1: Revops folder/runbooks/how-to-post-slack.md#How to post to Slack > Discipline
+  cite step 1: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Discipline
+  cite step 2: Revops folder/runbooks/close-comment-limits.md#Close comment limits > Comment length [conflict]
+  cite step 2: Policies folder/close-comment-limits.md#Close comment limits > Comment length [conflict]
+  cite step 2: Revops folder/runbooks/close-comment-limits.md#Close comment limits > What a comment carries
+  cite step 2: Policies folder/close-comment-limits.md#Close comment limits > What a comment carries
+  cite step 2: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Add an audit comment > Action shape
+  cite step 2: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Discipline
+  cite step 2: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Closing the loop
+  cite step 3: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Change issue status > Action shape
+  cite step 3: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Discipline
+  cite step 3: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Closing the loop
+risk: Supporting evidence for the completed accrual review was not supplied, so the audit comment must record it as unknown. No connected finance surface is available for the required post comment hand off to finance. The conflicting 60 word and 120 word limits do not block this work because the proposed comment will be no more than 60 words.
+obligations: [('write', ['slack']), ('conditional-write', ['linear']), ('conditional-write', ['linear'])] conditional-on-manager
+selectedBlocks: 43 decision: z7pzg5
+QUESTION open | k97b4qt9bzpeaym41sq649ezhs8gadgq | Two pages disagree under “Comment length”: A, Close comment limits (Revops folder), and B, Close comment limits (Policies folder). Which is right? Priya runs the other steps now and holds its writes to Linear until you answer and Retry.
+QUESTION open | None | When the manager will allow posting in Slack without asking first (probably after a week of clean work).
+QUESTION open | None | Whether the hire will get Northstar access before close.
