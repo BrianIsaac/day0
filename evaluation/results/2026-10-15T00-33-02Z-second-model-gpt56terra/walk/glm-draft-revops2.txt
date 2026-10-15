@@ -1,0 +1,15 @@
+REVOPS-2 state=plan-pending skip=
+summary: Post the audit comment on REVOPS-2 and move it to Done, per the candidate and the Linear runbook. The two trusted pages disagree on the comment word limit (120 vs 60), so the comment write is held until the manager settles which limit applies. All writes are held for the manager's literal approval because autonomous actions are off.
+  step 1: Draft the audit comment for REVOPS-2 stating the work done, the evidence read and anything left unknown, in that order, and include it in the manager-facing draft for approval.
+  step 2: Send the manager a DM with the draft comment and the proposed status change to Done, and ask which comment word limit applies, since the runbook page says 120 words and the policy page says 60.
+  step 3: After the manager approves the exact comment text and the word limit, post the audit comment on REVOPS-2 with save_comment on the linear surface.
+  step 4: After the comment is posted, move REVOPS-2 to Done with save_issue on the linear surface, so the status change is never the only trace of who acted.
+  cite step 1: Revops folder/runbooks/close-comment-limits.md#Close comment limits > What a comment carries
+  cite step 2: Revops folder/runbooks/close-comment-limits.md#Close comment limits > Comment length [conflict]
+  cite step 3: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Add an audit comment > Action shape
+  cite step 4: Revops folder/runbooks/how-to-update-ticket.md#How to update a Linear ticket > Change issue status > Action shape
+risk: The comment length limit is conflicted between two equally trusted pages, so the comment write waits on the manager's answer. The candidate gives no evidence detail for the comment body, so the drafted comment may need the manager to supply what the accrual review found.
+obligations: [('report', []), ('write', ['slack']), ('conditional-write', ['linear']), ('conditional-write', ['linear'])] conditional-on-manager
+selectedBlocks: 43 decision: dv3c99
+QUESTION open | k970wt9xmydpdjzkba5ke7m6z58ga490 | Two pages disagree under “Comment length”: A, Close comment limits (Revops folder), and B, Close comment limits (Policies folder). Which is right? Priya runs the other steps now and holds its writes to Slack and Linear until you answer and Retry.
+QUESTION open | None | Whether the hire will get Northstar access before close.

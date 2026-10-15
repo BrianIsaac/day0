@@ -249,6 +249,55 @@ differ. Nothing was tuned and no run was repeated.
 两次（此前每六次一次）；一次 `scope-hr-decision` 在请求方指定的频道回复后又告知经理（两条消息）；一次因技能始终未能
 通过占位符规则与冒烟测试而失败；一次写入任务多发了一条验证消息。这些变化无法从记录中归因于本波的提示词变更。
 
+### A second model for the conflict rule and the reorientation judgement on v0.22.0 - 15 October 2026
+
+The conflict walk and the reorientation judgement of 14 October, read again on the v0.22.0
+release commit on OpenAI `gpt-5.6-terra` (`api.openai.com`, the key route, native structured
+output), and this time the same walk on GLM 5.3 Flash on the same code, one fresh volume each, so
+the GLM column is a reading of this date rather than a quotation:
+[`results/2026-10-15T00-33-02Z-second-model-gpt56terra/`](results/2026-10-15T00-33-02Z-second-model-gpt56terra/readings.md),
+which says every step taken and every construction step. Nothing was tuned to either model.
+
+The rule (15.2): a step relying on a disputed passage cites it on the step whose write the point
+decides, no step of the planner's own asks about it, and the planner neither chooses a side nor
+plans round the point; Day0 asks the manager and holds the step.
+
+| Conflict walk, first draft | gpt-5.6-terra | GLM 5.3 Flash |
+|---|---|---|
+| A ticket whose comment must keep "within the close comment limits" | Both disputed passages cited on the step that writes the comment, no step of its own asking; but the summary keeps the comment within 60 words "so it complies with both conflicting comment limits"; the question asked, the Linear writes held | The disputed passage cited only on a step of its own that asks the manager which limit applies; the comment step does not cite it; the question asked, the Slack and Linear writes held |
+| A ticket whose comment follows "the close runbook" | No disputed passage cited, the neighbouring passage on the comment step, the comment kept within 60 words "so it complies with both documented limits"; nothing asked | The disputed passage cited on the step that writes the comment, no step of its own asking it, the comment "held until the manager says which limit applies"; the question asked |
+
+| Reorientation card | GLM 5.3 Flash | gpt-5.6-terra |
+|---|---|---|
+| Access revoked (the revocation trial's employee, this date's revocation bed) | first judgement failed, stored `unreadable` ("the reply gives no rationale"); asked once more: `none` | `none` |
+| Access revoked (`linear:read`) | `skill-action`, a re-check | `skill-action`, a re-check |
+| Role changed by hand | `charter-change`, a Will do clause edited | `charter-change`, a different Will do clause edited |
+
+**Findings.** Against 14 October, the second model now cites the disputed passages on the
+writing step alone, with no asking step of its own, the shape the rule asks for, but on both
+tickets it plans round the dispute by keeping the comment under the shorter limit, which the rule
+forbids; on one of them it does not cite the disputed passage at all. GLM put the cite on a step
+that asks, as on 13 October, on one ticket, and kept the rule on the other. **On the run, the
+second model's ticket ended `completed` with its work not done**: the manager approved the plan
+with the question open, the run sent its approval DM and stopped, and on the Retry with "Go ahead
+with the comment and the status change now; keep the comment short." it made one Slack read and
+completed, its own answer `not-done`, with nothing written to Linear (on 14 October that Retry
+held both writes behind the open question). Once the pair was answered "Both hold", a further
+Retry held the comment and the move to Done for approval, as on 14 October; a second `disagree`
+on the dismissed pair is still refused. On the second model, orientation proposed Slack with the
+class `social`, which cannot provision the employee's own app; the walk set it to `chat` by hand
+(a construction step), where GLM proposed `chat`. On the three cards the two models proposed the
+same kind each time; GLM's first judgement of the revocation card failed for a missing rationale
+(18-O's F5, seen live on the hosted model). These are single draws on one bed: a reading of the
+rule on two models, not a rate.
+
+**中文：** **2026 年 10 月 15 日**，在 v0.22.0 发布提交上用 `gpt-5.6-terra` 重新读取冲突规则与重新定向卡片的判断，
+并在同一代码上对 GLM 5.3 Flash 重做同一流程。第二个模型把有争议的段落引用在写入步骤上、没有自行提问的步骤，
+但两张工单都把评论控制在较短限额内以“同时满足两页”，即绕开争议；其中一张未引用争议段落。GLM 一张把引用放在
+自行询问经理的步骤上，另一张符合规则。运行时，第二个模型的工单在经理“继续”后只做了一次 Slack 读取就以
+“已完成”结束，其自报为工作未完成，Linear 未写入。三张卡片上两个模型提出的类型一致；GLM 对撤权卡片的第一次判断
+因缺少理由而失败。以上为单次抽样，不是比率。
+
 ### Stored beds read again on the v0.22.0 release commit - 15 October 2026
 
 On 15 October 2026 the nine sources read on 14 October for the second reading were read again

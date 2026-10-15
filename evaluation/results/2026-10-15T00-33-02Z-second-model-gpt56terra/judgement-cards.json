@@ -1,0 +1,87 @@
+{
+  "what": "The reorientation judgement on the same cards under two models, 15 October 2026, on the v0.22.0 release commit: each card opened once, its proposal read, set back to pending (a construction step) and asked again under the other model on the same deployment. The revocation card was judged by GLM when it opened, failed, and was asked once more under GLM before the second model.",
+  "cards": [
+    {
+      "bed": "revocation",
+      "trigger": "access-revoked",
+      "triggerSummary": "Its access “slack:read” was revoked",
+      "risk": "high",
+      "proposed": {
+        "zai-org/GLM-5.3-Flash": {
+          "kind": "none",
+          "rationale": "Only the slack:read scope was revoked, and my Slack duties are sending bounded handoff or verification messages, which do not depend on read access. Nothing in my documentation work needs to change."
+        },
+        "gpt-5.6-terra": {
+          "kind": "none",
+          "rationale": "The revoked Slack reading access does not require a documented change to the stated role or its listed work."
+        }
+      },
+      "earlierDraws": [
+        {
+          "model": "zai-org/GLM-5.3-Flash",
+          "proposed": {
+            "failure": "unreadable",
+            "kind": "pending"
+          },
+          "functionLog": "reorientation: the proposal judgement failed; kind unreadable; reason \"the reply gives no rationale\""
+        }
+      ]
+    },
+    {
+      "bed": "walk",
+      "trigger": "access-revoked",
+      "triggerSummary": "Its access “linear:read” was revoked",
+      "risk": "high",
+      "proposed": {
+        "zai-org/GLM-5.3-Flash": {
+          "action": "recheck",
+          "kind": "skill-action",
+          "rationale": "Your Linear read access was revoked, and the affected audit comment depends on that skill working in Linear. A recheck confirms whether the comment-and-close workflow can still run before we retire anything.",
+          "skillId": "q177n6jjf2ry2n98r26brdkpc58gaqqn"
+        },
+        "gpt-5.6-terra": {
+          "action": "recheck",
+          "kind": "skill-action",
+          "rationale": "The Linear read access used for Q3 close ticket work was revoked while an audit comment remains pending. Recheck the ticket-commenting skill to confirm it can still be performed with the remaining access.",
+          "skillId": "q177n6jjf2ry2n98r26brdkpc58gaqqn"
+        }
+      }
+    },
+    {
+      "bed": "walk",
+      "trigger": "role-changed",
+      "triggerSummary": "From next week Priya also covers the finance close desk, alongside revenue operations.",
+      "risk": "medium",
+      "proposed": {
+        "zai-org/GLM-5.3-Flash": {
+          "after": "Work the Q3 close tickets in Linear (team REVOPS, project Q3 close), including the audit note, the Looker pipeline tile refresh and the Northstar reconcile tickets, and also cover the finance close desk alongside revenue operations.",
+          "before": "Work the Q3 close tickets in Linear (team REVOPS, project Q3 close), including the audit note, the Looker pipeline tile refresh and the Northstar reconcile tickets.",
+          "changes": [
+            {
+              "field": "willDo",
+              "index": 1,
+              "kind": "edit-clause",
+              "text": "Work the Q3 close tickets in Linear (team REVOPS, project Q3 close), including the audit note, the Looker pipeline tile refresh and the Northstar reconcile tickets, and also cover the finance close desk alongside revenue operations."
+            }
+          ],
+          "kind": "charter-change",
+          "rationale": "The change adds finance close desk coverage to my role, so the clause describing the tickets I work should name that coverage too. The other clauses already apply unchanged to the expanded role."
+        },
+        "gpt-5.6-terra": {
+          "after": "Triage asks arriving in Slack for revenue operations and the finance close desk into Linear tickets.",
+          "before": "Triage asks arriving in Slack in #revops-asks into Linear tickets.",
+          "changes": [
+            {
+              "field": "willDo",
+              "index": 0,
+              "kind": "edit-clause",
+              "text": "Triage asks arriving in Slack for revenue operations and the finance close desk into Linear tickets."
+            }
+          ],
+          "kind": "charter-change",
+          "rationale": "Priya’s remit now includes the finance close desk alongside revenue operations. Expanding the triage clause covers the newly assigned incoming work without changing the existing Q3 close ticket scope."
+        }
+      }
+    }
+  ]
+}
