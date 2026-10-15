@@ -69,6 +69,7 @@ describe('the GLM bed on the v0.22.0 release commit', (): void => {
   it('ran both arms six times a task on the release commit, under the harness of 14 October', (): void => {
     expect(evidence.configuration).toMatchObject({
       commit: 'fddf16bd3d5aa0f70285cc4ea3d247d70cc740b7',
+      harnessVersion: 2,
       model: 'zai-org/GLM-5.3-Flash',
       backendModel: 'zai-org/GLM-5.3-Flash',
       requestedRunsByArm: { day0: 6, baseline: 6 },
@@ -147,6 +148,42 @@ describe('the GLM bed on the v0.22.0 release commit', (): void => {
     expect(unauthored.terminalState).toBe('failed');
     expect(unauthored.skillAuthoringAttempts).toBe(6);
     expect(unauthored.grade.facts.outOfScope?.decided).toBe(false);
+  });
+
+  it('keeps from the bed’s export what the evidence does not: the extra post, the unauthored skill’s events and every not-connected sentence', (): void => {
+    const misses = JSON.parse(readFileSync(new URL('day0-misses.json', BED), 'utf8')) as {
+      rows: Array<{ row: string; actions: Array<{ tool: string; channelSlug?: string }> }>;
+      day0R6OutOfScopeSkillEvents: Array<{ type: string; reason: string }>;
+      notConnectedPhrases: {
+        day0PlansRead: number;
+        matches: Array<{ row: string; context: string }>;
+      };
+    };
+    const pipeline = misses.rows.find((row) => row.row === 'day0-r3/write-pipeline-row')!;
+    expect(pipeline.actions.map((action) => [action.tool, action.channelSlug])).toEqual([
+      ['spreadsheet.appendRow', undefined],
+      ['ticket.update', undefined],
+      ['slack.postMessage', 'revops'],
+      ['slack.postMessage', 'dm-manager'],
+    ]);
+    expect(misses.day0R6OutOfScopeSkillEvents.map((event) => event.type)).toEqual([
+      'skill.failed',
+      'skill.author-failed',
+      'skill.failed',
+      'skill.verification-failed',
+      'skill.failed',
+      'skill.verification-failed',
+    ]);
+    expect(misses.notConnectedPhrases.day0PlansRead).toBe(65);
+    expect(misses.notConnectedPhrases.matches.map((match) => match.row)).toEqual([
+      'day0-r3/EVAL-DOC-03',
+      'day0-r3/EVAL-DOC-03',
+    ]);
+    expect(
+      misses.notConnectedPhrases.matches.every((match) =>
+        /\bIf the\b|\bif the\b|or report the gap if/.test(match.context),
+      ),
+    ).toBe(true);
   });
 
   it('stopped write-priya-verification twice on the trail mapping 14 October’s bed kept once', (): void => {

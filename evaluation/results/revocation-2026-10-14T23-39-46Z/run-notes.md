@@ -4,7 +4,9 @@ Recorded 15 October 2026 (23:39:46 UTC on 14 October) on the disposable compose 
 `day0-w18q` (backend `127.0.0.1:6810`, fake Slack `127.0.0.1:6813`), at the v0.22.0 release commit
 `fddf16bd3`. `commands.txt` is the driver's own list of the equivalent manual commands; the bed was
 brought up with the kit instead, by the 14 October recipe, which still holds on this commit (no
-file of the kit or the driver changed since `v0.21.0`):
+file of the kit or the driver, `scripts/demo-bed.ts`, `scripts/eval-revocation.ts` and
+`evaluation/revocation/`, changed since `v0.21.0`; the setup path it runs through did change, for
+the proxy environment):
 
 1. `./setup.sh --route featherless --sandbox local --warm-from day0-redactor-warm --gpu off
    --project day0-w18q --port 6810 --site-port 6811 --dashboard-port 8180 --app-port 6812

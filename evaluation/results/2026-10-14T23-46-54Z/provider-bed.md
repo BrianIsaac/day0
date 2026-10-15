@@ -41,7 +41,7 @@ reorientation judgement at all (no card opened). Coworker replies are canned.
 
 ## Structured output
 
-208 calls on Day0's rows, 19 invalid first replies, 21 validation failures, 21 repairs,
+208 calls on Day0's side (179 inside a task window, 29 outside: the question labeller 6, the charter 6, the work generator 17), 19 invalid first replies, 21 validation failures, 21 repairs,
 0 coercions, 0 failed calls. Coverage complete on 89 of 90 Day0 rows; the one incomplete row is
 `day0-r6/scope-hr-decision`, which never reached a plan (its skill was never registered). The
 ordinary arm's tool loop uses no structured call.
@@ -53,7 +53,8 @@ the draft that registered (ten a placeholder used without being declared under `
 a smoke test carrying the first work item's value) and say nothing of the row's outcome; three
 are the row's failure: `day0-r5` and `day0-r6/write-priya-verification` (below) and
 `day0-r6/scope-hr-decision` (`skill-authoring-attempts-exhausted`: one placeholder refusal, then
-smoke tests that exited 1, to the cap of six). On the ordinary arm, 8 rows carry the agent's own
+smoke tests that exited 1, to the cap of six; the skill's events, read from the export before the
+teardown, are in `day0-misses.json`). On the ordinary arm, 8 rows carry the agent's own
 refusal text or, once, a tool error (`baseline-r1/scope-northstar-figure`: a ticket update to a
 slug that does not exist).
 
