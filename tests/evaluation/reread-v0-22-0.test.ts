@@ -71,10 +71,15 @@ describe('the stored beds read again on the v0.22.0 release commit', (): void =>
         `evaluation/results/2026-10-14T05-09-45Z-second-reading-${bed}/${name}`,
       );
       expect(before.regradedFrom!.path, file).toBe(evidence.regradedFrom!.path);
-      const { generatedAt: _now, regradedFrom: now, ...rest } = evidence;
-      const { generatedAt: _then, regradedFrom: then, ...restBefore } = before;
-      expect(rest, file).toEqual(restBefore);
-      expect({ ...now, gradedAtCommit: '' }, file).toEqual({ ...then, gradedAtCommit: '' });
+      expect({ ...evidence, generatedAt: '', regradedFrom: undefined }, file).toEqual({
+        ...before,
+        generatedAt: '',
+        regradedFrom: undefined,
+      });
+      expect({ ...evidence.regradedFrom, gradedAtCommit: '' }, file).toEqual({
+        ...before.regradedFrom,
+        gradedAtCommit: '',
+      });
     }
   });
 
